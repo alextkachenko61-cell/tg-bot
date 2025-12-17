@@ -1,0 +1,1 @@
+.envecho __pycache__/echo .venv/echo *.pyc
