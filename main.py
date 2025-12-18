@@ -19,13 +19,18 @@ from aiogram.types import (
     ReplyKeyboardMarkup,
 )
 from aiogram.utils.keyboard import InlineKeyboardBuilder, ReplyKeyboardBuilder
+from aiogram.fsm.context import FSMContext
+from aiogram.fsm.state import State, StatesGroup
+from aiogram.fsm.storage.memory import MemoryStorage
 from dotenv import load_dotenv
 from PIL import Image
+from openai import AsyncOpenAI
 
 load_dotenv()
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 CHANNEL_USERNAME = os.getenv("CHANNEL_USERNAME")
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 DATA_FILE = Path("data/users.json")
 CARDS_DIR = Path("assets/cards")
 CARD_EXTENSIONS = {".png", ".jpg", ".jpeg"}
@@ -44,7 +49,13 @@ if not CHANNEL_USERNAME:
         "CHANNEL_USERNAME is not set. Please provide it in the environment or .env file."
     )
 
+openai_client = AsyncOpenAI(api_key=OPENAI_API_KEY) if OPENAI_API_KEY else None
+
 router = Router()
+
+
+class SpreadStates(StatesGroup):
+    waiting_for_question = State()
 
 
 def ensure_data_file() -> None:
@@ -100,6 +111,12 @@ def build_spread_options_keyboard() -> ReplyKeyboardMarkup:
     builder = ReplyKeyboardBuilder()
     builder.button(text="Карта дня")
     builder.button(text="Расклад из 3 карт")
+    return builder.as_markup(resize_keyboard=True)
+
+
+def build_cancel_keyboard() -> ReplyKeyboardMarkup:
+    builder = ReplyKeyboardBuilder()
+    builder.button(text="Отмена")
     return builder.as_markup(resize_keyboard=True)
 
 
@@ -174,6 +191,67 @@ def extract_start_payload(message: Message) -> str:
     return parts[1]
 
 
+async def generate_card_day_interpretation(card_name: str) -> str:
+    if not openai_client:
+        return f"Карта дня: {card_name}. Интерпретация будет добавлена позже."
+
+    try:
+        response = await openai_client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[
+                {
+                    "role": "system",
+                    "content": "Дай краткое значение карты Таро (5-7 предложений). Формат: Карта дня: <название>. Интерпретация...",
+                },
+                {"role": "user", "content": f"Карта дня: {card_name}"},
+            ],
+            max_tokens=300,
+        )
+        text = response.choices[0].message.content if response.choices else None
+        if not text:
+            raise RuntimeError("Empty OpenAI response")
+        return text
+    except Exception as exc:  # noqa: BLE001
+        logging.warning("Не удалось получить интерпретацию карты дня: %s", exc)
+        return f"Карта дня: {card_name}. Интерпретация будет добавлена позже."
+
+
+async def generate_three_cards_interpretation(question: str, card_names: List[str]) -> str:
+    if not openai_client:
+        return (
+            "Интерпретация временно недоступна. Расклад из 3 карт будет дополнен позже."
+        )
+
+    joined_cards = ", ".join(card_names)
+    try:
+        response = await openai_client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[
+                {
+                    "role": "system",
+                    "content": (
+                        "Ты таролог. Дай интерпретацию по каждой карте и общий вывод."
+                    ),
+                },
+                {
+                    "role": "user",
+                    "content": (
+                        f"Вопрос: {question}\nКарты: {joined_cards}."
+                        " Опиши каждую карту и общий итог."
+                    ),
+                },
+            ],
+            max_tokens=500,
+        )
+        text = response.choices[0].message.content if response.choices else None
+        if not text:
+            raise RuntimeError("Empty OpenAI response")
+        return text
+    except Exception as exc:  # noqa: BLE001
+        logging.warning("Не удалось получить интерпретацию 3 карт: %s", exc)
+        return "Интерпретация недоступна. Позже добавим подробности по раскладу."
+
+
 @router.message(CommandStart())
 async def handle_start(message: Message, bot: Bot) -> None:
     users = load_users()
@@ -245,7 +323,8 @@ async def handle_check_subscription(callback: CallbackQuery, bot: Bot) -> None:
 
 
 @router.message(F.text == "Меню")
-async def handle_menu(message: Message) -> None:
+async def handle_menu(message: Message, state: FSMContext) -> None:
+    await state.clear()
     user = get_user_record(message.from_user.id)
     spreads_left = user.get("spreads_left", 0)
 
@@ -256,7 +335,8 @@ async def handle_menu(message: Message) -> None:
 
 
 @router.message(F.text == "Получить расклад")
-async def handle_get_spread(message: Message) -> None:
+async def handle_get_spread(message: Message, state: FSMContext) -> None:
+    await state.clear()
     user = get_user_record(message.from_user.id)
     spreads_left = user.get("spreads_left", 0)
 
@@ -273,8 +353,21 @@ async def handle_get_spread(message: Message) -> None:
     )
 
 
+async def process_card_of_day(message: Message, user: Dict[str, Any], card_files: List[Path]) -> None:
+    card_path = random.choice(card_files)
+    await message.answer_photo(FSInputFile(card_path))
+    user["spreads_left"] = user.get("spreads_left", 0) - 1
+    save_user_record(message.from_user.id, user)
+    interpretation = await generate_card_day_interpretation(card_path.stem)
+    await message.answer(
+        interpretation,
+        reply_markup=build_menu_keyboard(),
+    )
+
+
 @router.message(F.text.in_({"Карта дня", "Расклад из 3 карт"}))
-async def handle_spread_choice(message: Message) -> None:
+async def handle_spread_choice(message: Message, state: FSMContext) -> None:
+    await state.clear()
     user = get_user_record(message.from_user.id)
     spreads_left = user.get("spreads_left", 0)
 
@@ -294,15 +387,7 @@ async def handle_spread_choice(message: Message) -> None:
         return
 
     if message.text == "Карта дня":
-        card_path = random.choice(card_files)
-        await message.answer_photo(FSInputFile(card_path))
-        spreads_left -= 1
-        user["spreads_left"] = spreads_left
-        save_user_record(message.from_user.id, user)
-        await message.answer(
-            f"Карта дня: {card_path.stem}. Интерпретация будет добавлена позже.",
-            reply_markup=build_menu_keyboard(),
-        )
+        await process_card_of_day(message, user, card_files)
         return
 
     if len(card_files) < 3:
@@ -312,16 +397,10 @@ async def handle_spread_choice(message: Message) -> None:
         )
         return
 
-    selected_cards = random.sample(card_files, 3)
-    collage_file = create_three_card_collage(selected_cards)
-    await message.answer_photo(collage_file)
-    spreads_left -= 1
-    user["spreads_left"] = spreads_left
-    save_user_record(message.from_user.id, user)
-    card_names = ", ".join(card.stem for card in selected_cards)
+    await state.set_state(SpreadStates.waiting_for_question)
     await message.answer(
-        f"3 карты: {card_names}. Интерпретации будут добавлены позже.",
-        reply_markup=build_menu_keyboard(),
+        "Напишите ваш вопрос одним сообщением.",
+        reply_markup=build_cancel_keyboard(),
     )
 
 
@@ -345,10 +424,52 @@ async def handle_invite_friend(message: Message, bot: Bot) -> None:
     )
 
 
+@router.message(SpreadStates.waiting_for_question, F.text == "Отмена")
+async def handle_cancel_question(message: Message, state: FSMContext) -> None:
+    await state.clear()
+    await message.answer("Действие отменено.", reply_markup=build_menu_keyboard())
+
+
+@router.message(SpreadStates.waiting_for_question)
+async def handle_three_card_question(message: Message, state: FSMContext) -> None:
+    user = get_user_record(message.from_user.id)
+    spreads_left = user.get("spreads_left", 0)
+
+    if spreads_left <= 0:
+        await state.clear()
+        await message.answer(
+            "К сожалению, у вас закончились расклады. Вы можете приобрести premium либо получить бесплатный расклад за каждого пригласившего друга.",
+            reply_markup=build_premium_keyboard(),
+        )
+        return
+
+    card_files = load_card_files()
+    if len(card_files) < 3:
+        await state.clear()
+        await message.answer(
+            "Недостаточно карт в базе, добавьте не менее 3 изображений в assets/cards.",
+            reply_markup=build_menu_keyboard(),
+        )
+        return
+
+    selected_cards = random.sample(card_files, 3)
+    collage_file = create_three_card_collage(selected_cards)
+    await message.answer_photo(collage_file)
+
+    card_names = [card.stem for card in selected_cards]
+    question_text = message.text or ""
+    interpretation = await generate_three_cards_interpretation(question_text, card_names)
+    await message.answer(interpretation, reply_markup=build_menu_keyboard())
+
+    user["spreads_left"] = spreads_left - 1
+    save_user_record(message.from_user.id, user)
+    await state.clear()
+
+
 async def main() -> None:
     logging.basicConfig(level=logging.INFO)
     bot = Bot(token=BOT_TOKEN)
-    dispatcher = Dispatcher()
+    dispatcher = Dispatcher(storage=MemoryStorage())
     dispatcher.include_router(router)
 
     await bot.delete_webhook(drop_pending_updates=True)
