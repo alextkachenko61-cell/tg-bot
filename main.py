@@ -2,21 +2,33 @@ import asyncio
 import json
 import logging
 import os
+import random
+from io import BytesIO
 from pathlib import Path
-from typing import Any, Dict
+from typing import Any, Dict, List
 
 from aiogram import Bot, Dispatcher, Router, F
 from aiogram.enums import ChatMemberStatus
 from aiogram.filters import CommandStart
-from aiogram.types import CallbackQuery, InlineKeyboardMarkup, Message, ReplyKeyboardMarkup
+from aiogram.types import (
+    BufferedInputFile,
+    CallbackQuery,
+    FSInputFile,
+    InlineKeyboardMarkup,
+    Message,
+    ReplyKeyboardMarkup,
+)
 from aiogram.utils.keyboard import InlineKeyboardBuilder, ReplyKeyboardBuilder
 from dotenv import load_dotenv
+from PIL import Image
 
 load_dotenv()
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 CHANNEL_USERNAME = os.getenv("CHANNEL_USERNAME")
 DATA_FILE = Path("data/users.json")
+CARDS_DIR = Path("assets/cards")
+CARD_EXTENSIONS = {".png", ".jpg", ".jpeg"}
 
 if not BOT_TOKEN:
     raise RuntimeError("BOT_TOKEN is not set. Please provide it in the environment or .env file.")
@@ -80,6 +92,43 @@ def build_premium_keyboard() -> ReplyKeyboardMarkup:
     builder.button(text="Пригласить друга")
     builder.adjust(2)
     return builder.as_markup(resize_keyboard=True)
+
+
+def load_card_files() -> List[Path]:
+    CARDS_DIR.mkdir(parents=True, exist_ok=True)
+    return [
+        path
+        for path in CARDS_DIR.iterdir()
+        if path.is_file() and path.suffix.lower() in CARD_EXTENSIONS
+    ]
+
+
+def create_three_card_collage(card_paths: List[Path]) -> BufferedInputFile:
+    images = []
+    for path in card_paths:
+        with Image.open(path) as img:
+            images.append(img.convert("RGB"))
+
+    target_height = max(image.height for image in images)
+    resized_images = []
+    for image in images:
+        if image.height != target_height:
+            new_width = int(image.width * (target_height / image.height))
+            resized_images.append(image.resize((new_width, target_height)))
+        else:
+            resized_images.append(image)
+
+    total_width = sum(image.width for image in resized_images)
+    collage = Image.new("RGB", (total_width, target_height))
+    offset = 0
+    for image in resized_images:
+        collage.paste(image, (offset, 0))
+        offset += image.width
+
+    buffer = BytesIO()
+    collage.save(buffer, format="JPEG")
+    buffer.seek(0)
+    return BufferedInputFile(buffer.getvalue(), filename="three_cards.jpg")
 
 
 def get_user_record(user_id: int) -> Dict[str, Any]:
@@ -174,15 +223,42 @@ async def handle_spread_choice(message: Message) -> None:
         )
         return
 
-    spreads_left -= 1
-    update_user_record(message.from_user.id, spreads_left, user.get("free_granted", False))
+    card_files = load_card_files()
+    if not card_files:
+        await message.answer(
+            "Нет карт в базе, добавьте изображения в assets/cards.",
+            reply_markup=build_menu_keyboard(),
+        )
+        return
 
     if message.text == "Карта дня":
-        text = "Карта дня: (заглушка) Значение будет добавлено позже"
-    else:
-        text = "3 карты: (заглушка) Значения будут добавлены позже"
+        card_path = random.choice(card_files)
+        await message.answer_photo(FSInputFile(card_path))
+        spreads_left -= 1
+        update_user_record(message.from_user.id, spreads_left, user.get("free_granted", False))
+        await message.answer(
+            f"Карта дня: {card_path.stem}. Интерпретация будет добавлена позже.",
+            reply_markup=build_menu_keyboard(),
+        )
+        return
 
-    await message.answer(text, reply_markup=build_menu_keyboard())
+    if len(card_files) < 3:
+        await message.answer(
+            "Недостаточно карт в базе, добавьте не менее 3 изображений в assets/cards.",
+            reply_markup=build_menu_keyboard(),
+        )
+        return
+
+    selected_cards = random.sample(card_files, 3)
+    collage_file = create_three_card_collage(selected_cards)
+    await message.answer_photo(collage_file)
+    spreads_left -= 1
+    update_user_record(message.from_user.id, spreads_left, user.get("free_granted", False))
+    card_names = ", ".join(card.stem for card in selected_cards)
+    await message.answer(
+        f"3 карты: {card_names}. Интерпретации будут добавлены позже.",
+        reply_markup=build_menu_keyboard(),
+    )
 
 
 @router.message(F.text == "Premium")
