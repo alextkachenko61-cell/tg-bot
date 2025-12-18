@@ -5,7 +5,7 @@ import os
 import random
 from io import BytesIO
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 from aiogram import Bot, Dispatcher, Router, F
 from aiogram.enums import ChatMemberStatus
@@ -29,6 +29,12 @@ CHANNEL_USERNAME = os.getenv("CHANNEL_USERNAME")
 DATA_FILE = Path("data/users.json")
 CARDS_DIR = Path("assets/cards")
 CARD_EXTENSIONS = {".png", ".jpg", ".jpeg"}
+DEFAULT_USER = {
+    "spreads_left": 0,
+    "free_granted": False,
+    "invited_count": 0,
+    "referred_by": None,
+}
 
 if not BOT_TOKEN:
     raise RuntimeError("BOT_TOKEN is not set. Please provide it in the environment or .env file.")
@@ -60,6 +66,17 @@ def load_users() -> Dict[str, Dict[str, Any]]:
 def save_users(users: Dict[str, Dict[str, Any]]) -> None:
     ensure_data_file()
     DATA_FILE.write_text(json.dumps(users, ensure_ascii=False, indent=2), encoding="utf-8")
+
+
+def ensure_user_defaults(user: Dict[str, Any]) -> Dict[str, Any]:
+    updated = {**DEFAULT_USER, **(user or {})}
+    return updated
+
+
+def save_user_record(user_id: int, user: Dict[str, Any]) -> None:
+    users = load_users()
+    users[str(user_id)] = ensure_user_defaults(user)
+    save_users(users)
 
 
 def build_subscription_keyboard() -> InlineKeyboardMarkup:
@@ -134,20 +151,53 @@ def create_three_card_collage(card_paths: List[Path]) -> BufferedInputFile:
 def get_user_record(user_id: int) -> Dict[str, Any]:
     users = load_users()
     user_key = str(user_id)
-    user = users.get(user_key, {"spreads_left": 0, "free_granted": False})
-    users[user_key] = user
-    save_users(users)
+    user = ensure_user_defaults(users.get(user_key, {}))
+    if users.get(user_key) != user:
+        users[user_key] = user
+        save_users(users)
     return user
 
 
-def update_user_record(user_id: int, spreads_left: int, free_granted: bool) -> None:
-    users = load_users()
-    users[str(user_id)] = {"spreads_left": spreads_left, "free_granted": free_granted}
-    save_users(users)
+def parse_referral_id(args: str) -> Optional[int]:
+    payload = args.strip()
+    if not payload.isdigit():
+        return None
+    return int(payload)
 
 
 @router.message(CommandStart())
-async def handle_start(message: Message) -> None:
+async def handle_start(message: Message, bot: Bot) -> None:
+    users = load_users()
+    user_id = message.from_user.id
+    user_key = str(user_id)
+    is_new_user = user_key not in users
+    referral_payload = parse_referral_id(message.get_args()) if message.get_args() else None
+
+    if is_new_user:
+        new_user_record = ensure_user_defaults({})
+        if referral_payload and referral_payload != user_id:
+            inviter_key = str(referral_payload)
+            inviter_record = ensure_user_defaults(users.get(inviter_key, {}))
+            inviter_record["spreads_left"] += 1
+            inviter_record["invited_count"] += 1
+            users[inviter_key] = inviter_record
+            new_user_record["referred_by"] = referral_payload
+            try:
+                await bot.send_message(
+                    referral_payload,
+                    f"Вам начислен бесплатный расклад за приглашенного друга. Доступно: {inviter_record['spreads_left']}",
+                )
+            except Exception as exc:  # noqa: BLE001
+                logging.info("Не удалось отправить уведомление приглашавшему %s: %s", referral_payload, exc)
+
+        users[user_key] = new_user_record
+        save_users(users)
+    else:
+        current_user = ensure_user_defaults(users.get(user_key, {}))
+        if users.get(user_key) != current_user:
+            users[user_key] = current_user
+            save_users(users)
+
     await message.answer(
         "Для использования бота подпишитесь на канал",
         reply_markup=build_subscription_keyboard(),
@@ -174,7 +224,9 @@ async def handle_check_subscription(callback: CallbackQuery, bot: Bot) -> None:
     if not free_granted:
         spreads_left += 1
         free_granted = True
-        update_user_record(callback.from_user.id, spreads_left, free_granted)
+        user["spreads_left"] = spreads_left
+        user["free_granted"] = free_granted
+        save_user_record(callback.from_user.id, user)
 
     await callback.message.answer(
         f"Вам начислен бесплатный расклад, раскладов доступно: {spreads_left}",
@@ -235,7 +287,8 @@ async def handle_spread_choice(message: Message) -> None:
         card_path = random.choice(card_files)
         await message.answer_photo(FSInputFile(card_path))
         spreads_left -= 1
-        update_user_record(message.from_user.id, spreads_left, user.get("free_granted", False))
+        user["spreads_left"] = spreads_left
+        save_user_record(message.from_user.id, user)
         await message.answer(
             f"Карта дня: {card_path.stem}. Интерпретация будет добавлена позже.",
             reply_markup=build_menu_keyboard(),
@@ -253,7 +306,8 @@ async def handle_spread_choice(message: Message) -> None:
     collage_file = create_three_card_collage(selected_cards)
     await message.answer_photo(collage_file)
     spreads_left -= 1
-    update_user_record(message.from_user.id, spreads_left, user.get("free_granted", False))
+    user["spreads_left"] = spreads_left
+    save_user_record(message.from_user.id, user)
     card_names = ", ".join(card.stem for card in selected_cards)
     await message.answer(
         f"3 карты: {card_names}. Интерпретации будут добавлены позже.",
@@ -267,8 +321,18 @@ async def handle_premium(message: Message) -> None:
 
 
 @router.message(F.text == "Пригласить друга")
-async def handle_invite_friend(message: Message) -> None:
-    await message.answer("Скоро добавим реферальную систему.", reply_markup=build_menu_keyboard())
+async def handle_invite_friend(message: Message, bot: Bot) -> None:
+    me = await bot.get_me()
+    bot_username = me.username
+    if not bot_username:
+        await message.answer("Не удалось получить имя бота для ссылки.", reply_markup=build_menu_keyboard())
+        return
+
+    referral_link = f"https://t.me/{bot_username}?start={message.from_user.id}"
+    await message.answer(
+        "Поделитесь ссылкой с другом, чтобы получить дополнительный расклад:\n" f"{referral_link}",
+        reply_markup=build_menu_keyboard(),
+    )
 
 
 async def main() -> None:
