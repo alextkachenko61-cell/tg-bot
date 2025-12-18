@@ -35,6 +35,13 @@ LLM_ENABLED = os.getenv("LLM_ENABLED", "1") == "1"
 LLM_MODEL = os.getenv("LLM_MODEL", "gpt-4.1-mini")
 LLM_MAX_TOKENS_DAY = int(os.getenv("LLM_MAX_TOKENS_DAY", "220"))
 LLM_MAX_TOKENS_3 = int(os.getenv("LLM_MAX_TOKENS_3", "420"))
+LLM_SYSTEM_PROMPT = os.getenv(
+    "LLM_SYSTEM_PROMPT",
+    (
+        "Ты помогаешь кратко и нейтрально интерпретировать карты Таро. "
+        "Отвечай на русском языке без мистики и пафоса, лаконично и спокойно."
+    ),
+)
 DATA_FILE = Path("data/users.json")
 CARDS_DIR = Path("assets/cards")
 CARD_EXTENSIONS = {".png", ".jpg", ".jpeg"}
@@ -214,13 +221,7 @@ async def call_llm(messages: List[Dict[str, str]], max_tokens: int) -> Optional[
 async def generate_card_day_interpretation(card_name: str) -> str:
     fallback = f"Карта дня: {card_name}. Интерпретация будет добавлена позже."
     messages = [
-        {
-            "role": "system",
-            "content": (
-                "Ты помогаешь кратко и нейтрально интерпретировать карту Таро."
-                " Отвечай на русском языке без мистики и пафоса, 5-7 предложений."
-            ),
-        },
+        {"role": "system", "content": LLM_SYSTEM_PROMPT},
         {"role": "user", "content": f"Контекст: Карта дня. Название карты: {card_name}"},
     ]
 
@@ -231,14 +232,7 @@ async def generate_card_day_interpretation(card_name: str) -> str:
 async def generate_three_cards_interpretation(question: str, card_names: List[str]) -> str:
     joined_cards = ", ".join(card_names)
     messages = [
-        {
-            "role": "system",
-            "content": (
-                "Ты кратко интерпретируешь расклад из 3 карт."
-                " Пиши на русском, спокойно и без пафоса."
-                " Дай по каждой карте 2-3 предложения и общий вывод."
-            ),
-        },
+        {"role": "system", "content": LLM_SYSTEM_PROMPT},
         {
             "role": "user",
             "content": (
