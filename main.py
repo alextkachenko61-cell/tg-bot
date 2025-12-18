@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from aiogram import Bot, Dispatcher, Router, F
-from aiogram.enums import ChatMemberStatus
+from aiogram.enums import ChatMemberStatus, ParseMode
 from aiogram.filters import CommandStart
 from aiogram.types import (
     BufferedInputFile,
@@ -219,10 +219,18 @@ async def call_llm(messages: List[Dict[str, str]], max_tokens: int) -> Optional[
 
 
 async def generate_card_day_interpretation(card_name: str) -> str:
-    fallback = f"Карта дня: {card_name}. Интерпретация будет добавлена позже."
+    fallback = (
+        f"<b>Карта дня:</b> {card_name}. " "Интерпретация будет добавлена позже."
+    )
     messages = [
         {"role": "system", "content": LLM_SYSTEM_PROMPT},
-        {"role": "user", "content": f"Контекст: Карта дня. Название карты: {card_name}"},
+        {
+            "role": "user",
+            "content": (
+                "Контекст: Карта дня. Название карты: "
+                f"{card_name}. Ответ верни в HTML, выдели жирным краткий вывод."
+            ),
+        },
     ]
 
     text = await call_llm(messages=messages, max_tokens=LLM_MAX_TOKENS_DAY)
@@ -239,11 +247,14 @@ async def generate_three_cards_interpretation(question: str, card_names: List[st
                 f"Вопрос пользователя: {question}\n"
                 f"Карты: {joined_cards}."
                 " Опиши значение каждой карты и общий итог."
+                " Ответ верни в HTML, выдели жирным ключевые выводы."
             ),
         },
     ]
 
-    fallback = "Интерпретация недоступна. Позже добавим подробности по раскладу."
+    fallback = (
+        "<b>Интерпретация недоступна.</b> " "Позже добавим подробности по раскладу."
+    )
     text = await call_llm(messages=messages, max_tokens=LLM_MAX_TOKENS_3)
     return text or fallback
 
@@ -464,7 +475,7 @@ async def handle_three_card_question(message: Message, state: FSMContext) -> Non
 
 async def main() -> None:
     logging.basicConfig(level=logging.INFO)
-    bot = Bot(token=BOT_TOKEN)
+    bot = Bot(token=BOT_TOKEN, parse_mode=ParseMode.HTML)
     dispatcher = Dispatcher(storage=MemoryStorage())
     dispatcher.include_router(router)
 
