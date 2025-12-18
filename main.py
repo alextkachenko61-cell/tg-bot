@@ -31,6 +31,8 @@ load_dotenv()
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 CHANNEL_USERNAME = os.getenv("CHANNEL_USERNAME")
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+LLM_ENABLED = os.getenv("LLM_ENABLED", "1") == "1"
+LLM_MODEL = os.getenv("LLM_MODEL", "gpt-4.1-mini")
 DATA_FILE = Path("data/users.json")
 CARDS_DIR = Path("assets/cards")
 CARD_EXTENSIONS = {".png", ".jpg", ".jpeg"}
@@ -191,65 +193,63 @@ def extract_start_payload(message: Message) -> str:
     return parts[1]
 
 
-async def generate_card_day_interpretation(card_name: str) -> str:
-    if not openai_client:
-        return f"Карта дня: {card_name}. Интерпретация будет добавлена позже."
+async def call_llm(messages: List[Dict[str, str]], max_tokens: int) -> Optional[str]:
+    if not (LLM_ENABLED and openai_client):
+        return None
 
     try:
         response = await openai_client.chat.completions.create(
-            model="gpt-4o-mini",
-            messages=[
-                {
-                    "role": "system",
-                    "content": "Дай краткое значение карты Таро (5-7 предложений). Формат: Карта дня: <название>. Интерпретация...",
-                },
-                {"role": "user", "content": f"Карта дня: {card_name}"},
-            ],
-            max_tokens=300,
+            model=LLM_MODEL,
+            messages=messages,
+            max_tokens=max_tokens,
         )
-        text = response.choices[0].message.content if response.choices else None
-        if not text:
-            raise RuntimeError("Empty OpenAI response")
-        return text
+        return response.choices[0].message.content if response.choices else None
     except Exception as exc:  # noqa: BLE001
-        logging.warning("Не удалось получить интерпретацию карты дня: %s", exc)
-        return f"Карта дня: {card_name}. Интерпретация будет добавлена позже."
+        logging.warning("Не удалось получить ответ от LLM: %s", exc)
+        return None
+
+
+async def generate_card_day_interpretation(card_name: str) -> str:
+    fallback = f"Карта дня: {card_name}. Интерпретация будет добавлена позже."
+    messages = [
+        {
+            "role": "system",
+            "content": (
+                "Ты помогаешь кратко и нейтрально интерпретировать карту Таро."
+                " Отвечай на русском языке без мистики и пафоса, 5-7 предложений."
+            ),
+        },
+        {"role": "user", "content": f"Контекст: Карта дня. Название карты: {card_name}"},
+    ]
+
+    text = await call_llm(messages=messages, max_tokens=280)
+    return text or fallback
 
 
 async def generate_three_cards_interpretation(question: str, card_names: List[str]) -> str:
-    if not openai_client:
-        return (
-            "Интерпретация временно недоступна. Расклад из 3 карт будет дополнен позже."
-        )
-
     joined_cards = ", ".join(card_names)
-    try:
-        response = await openai_client.chat.completions.create(
-            model="gpt-4o-mini",
-            messages=[
-                {
-                    "role": "system",
-                    "content": (
-                        "Ты таролог. Дай интерпретацию по каждой карте и общий вывод."
-                    ),
-                },
-                {
-                    "role": "user",
-                    "content": (
-                        f"Вопрос: {question}\nКарты: {joined_cards}."
-                        " Опиши каждую карту и общий итог."
-                    ),
-                },
-            ],
-            max_tokens=500,
-        )
-        text = response.choices[0].message.content if response.choices else None
-        if not text:
-            raise RuntimeError("Empty OpenAI response")
-        return text
-    except Exception as exc:  # noqa: BLE001
-        logging.warning("Не удалось получить интерпретацию 3 карт: %s", exc)
-        return "Интерпретация недоступна. Позже добавим подробности по раскладу."
+    messages = [
+        {
+            "role": "system",
+            "content": (
+                "Ты кратко интерпретируешь расклад из 3 карт."
+                " Пиши на русском, спокойно и без пафоса."
+                " Дай по каждой карте 2-3 предложения и общий вывод."
+            ),
+        },
+        {
+            "role": "user",
+            "content": (
+                f"Вопрос пользователя: {question}\n"
+                f"Карты: {joined_cards}."
+                " Опиши значение каждой карты и общий итог."
+            ),
+        },
+    ]
+
+    fallback = "Интерпретация недоступна. Позже добавим подробности по раскладу."
+    text = await call_llm(messages=messages, max_tokens=520)
+    return text or fallback
 
 
 @router.message(CommandStart())
@@ -356,13 +356,13 @@ async def handle_get_spread(message: Message, state: FSMContext) -> None:
 async def process_card_of_day(message: Message, user: Dict[str, Any], card_files: List[Path]) -> None:
     card_path = random.choice(card_files)
     await message.answer_photo(FSInputFile(card_path))
-    user["spreads_left"] = user.get("spreads_left", 0) - 1
-    save_user_record(message.from_user.id, user)
     interpretation = await generate_card_day_interpretation(card_path.stem)
     await message.answer(
         interpretation,
         reply_markup=build_menu_keyboard(),
     )
+    user["spreads_left"] = max(user.get("spreads_left", 0) - 1, 0)
+    save_user_record(message.from_user.id, user)
 
 
 @router.message(F.text.in_({"Карта дня", "Расклад из 3 карт"}))
@@ -461,7 +461,7 @@ async def handle_three_card_question(message: Message, state: FSMContext) -> Non
     interpretation = await generate_three_cards_interpretation(question_text, card_names)
     await message.answer(interpretation, reply_markup=build_menu_keyboard())
 
-    user["spreads_left"] = spreads_left - 1
+    user["spreads_left"] = max(spreads_left - 1, 0)
     save_user_record(message.from_user.id, user)
     await state.clear()
 
