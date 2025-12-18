@@ -165,13 +165,23 @@ def parse_referral_id(args: str) -> Optional[int]:
     return int(payload)
 
 
+def extract_start_payload(message: Message) -> str:
+    if not message.text:
+        return ""
+    parts = message.text.split(maxsplit=1)
+    if len(parts) < 2:
+        return ""
+    return parts[1]
+
+
 @router.message(CommandStart())
 async def handle_start(message: Message, bot: Bot) -> None:
     users = load_users()
     user_id = message.from_user.id
     user_key = str(user_id)
     is_new_user = user_key not in users
-    referral_payload = parse_referral_id(message.get_args()) if message.get_args() else None
+    payload_text = extract_start_payload(message)
+    referral_payload = parse_referral_id(payload_text) if payload_text else None
 
     if is_new_user:
         new_user_record = ensure_user_defaults({})
