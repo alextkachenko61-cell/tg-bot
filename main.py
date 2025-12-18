@@ -5,7 +5,7 @@ import os
 from pathlib import Path
 from typing import Any, Dict
 
-from aiogram import Bot, Dispatcher, Router
+from aiogram import Bot, Dispatcher, Router, F
 from aiogram.enums import ChatMemberStatus
 from aiogram.filters import CommandStart
 from aiogram.types import CallbackQuery, InlineKeyboardMarkup, Message, ReplyKeyboardMarkup
@@ -67,6 +67,21 @@ def build_menu_keyboard() -> ReplyKeyboardMarkup:
     return builder.as_markup(resize_keyboard=True)
 
 
+def build_spread_options_keyboard() -> ReplyKeyboardMarkup:
+    builder = ReplyKeyboardBuilder()
+    builder.button(text="Карта дня")
+    builder.button(text="Расклад из 3 карт")
+    return builder.as_markup(resize_keyboard=True)
+
+
+def build_premium_keyboard() -> ReplyKeyboardMarkup:
+    builder = ReplyKeyboardBuilder()
+    builder.button(text="Premium")
+    builder.button(text="Пригласить друга")
+    builder.adjust(2)
+    return builder.as_markup(resize_keyboard=True)
+
+
 def get_user_record(user_id: int) -> Dict[str, Any]:
     users = load_users()
     user_key = str(user_id)
@@ -116,6 +131,68 @@ async def handle_check_subscription(callback: CallbackQuery, bot: Bot) -> None:
         f"Вам начислен бесплатный расклад, раскладов доступно: {spreads_left}",
         reply_markup=build_menu_keyboard(),
     )
+
+
+@router.message(F.text == "Меню")
+async def handle_menu(message: Message) -> None:
+    user = get_user_record(message.from_user.id)
+    spreads_left = user.get("spreads_left", 0)
+
+    await message.answer(
+        f"Доступно раскладов: {spreads_left}",
+        reply_markup=build_menu_keyboard(),
+    )
+
+
+@router.message(F.text == "Получить расклад")
+async def handle_get_spread(message: Message) -> None:
+    user = get_user_record(message.from_user.id)
+    spreads_left = user.get("spreads_left", 0)
+
+    if spreads_left <= 0:
+        await message.answer(
+            "К сожалению, у вас закончились расклады. Вы можете приобрести premium либо получить бесплатный расклад за каждого приглашенного друга.",
+            reply_markup=build_premium_keyboard(),
+        )
+        return
+
+    await message.answer(
+        "Выберите тип расклада:",
+        reply_markup=build_spread_options_keyboard(),
+    )
+
+
+@router.message(F.text.in_({"Карта дня", "Расклад из 3 карт"}))
+async def handle_spread_choice(message: Message) -> None:
+    user = get_user_record(message.from_user.id)
+    spreads_left = user.get("spreads_left", 0)
+
+    if spreads_left <= 0:
+        await message.answer(
+            "К сожалению, у вас закончились расклады. Вы можете приобрести premium либо получить бесплатный расклад за каждого приглашенного друга.",
+            reply_markup=build_premium_keyboard(),
+        )
+        return
+
+    spreads_left -= 1
+    update_user_record(message.from_user.id, spreads_left, user.get("free_granted", False))
+
+    if message.text == "Карта дня":
+        text = "Карта дня: (заглушка) Значение будет добавлено позже"
+    else:
+        text = "3 карты: (заглушка) Значения будут добавлены позже"
+
+    await message.answer(text, reply_markup=build_menu_keyboard())
+
+
+@router.message(F.text == "Premium")
+async def handle_premium(message: Message) -> None:
+    await message.answer("Premium скоро будет доступен.", reply_markup=build_menu_keyboard())
+
+
+@router.message(F.text == "Пригласить друга")
+async def handle_invite_friend(message: Message) -> None:
+    await message.answer("Скоро добавим реферальную систему.", reply_markup=build_menu_keyboard())
 
 
 async def main() -> None:
