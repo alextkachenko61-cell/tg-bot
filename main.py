@@ -33,6 +33,8 @@ CHANNEL_USERNAME = os.getenv("CHANNEL_USERNAME")
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 LLM_ENABLED = os.getenv("LLM_ENABLED", "1") == "1"
 LLM_MODEL = os.getenv("LLM_MODEL", "gpt-4.1-mini")
+LLM_MAX_TOKENS_DAY = int(os.getenv("LLM_MAX_TOKENS_DAY", "220"))
+LLM_MAX_TOKENS_3 = int(os.getenv("LLM_MAX_TOKENS_3", "420"))
 DATA_FILE = Path("data/users.json")
 CARDS_DIR = Path("assets/cards")
 CARD_EXTENSIONS = {".png", ".jpg", ".jpeg"}
@@ -222,7 +224,7 @@ async def generate_card_day_interpretation(card_name: str) -> str:
         {"role": "user", "content": f"Контекст: Карта дня. Название карты: {card_name}"},
     ]
 
-    text = await call_llm(messages=messages, max_tokens=280)
+    text = await call_llm(messages=messages, max_tokens=LLM_MAX_TOKENS_DAY)
     return text or fallback
 
 
@@ -248,7 +250,7 @@ async def generate_three_cards_interpretation(question: str, card_names: List[st
     ]
 
     fallback = "Интерпретация недоступна. Позже добавим подробности по раскладу."
-    text = await call_llm(messages=messages, max_tokens=520)
+    text = await call_llm(messages=messages, max_tokens=LLM_MAX_TOKENS_3)
     return text or fallback
 
 
