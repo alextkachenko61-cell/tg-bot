@@ -1,1 +1,4 @@
-.envecho __pycache__/echo .venv/echo *.pyc
+.env
+__pycache__/
+.venv/
+*.pyc
