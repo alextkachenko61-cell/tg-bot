@@ -203,6 +203,10 @@ def extract_start_payload(message: Message) -> str:
     return parts[1]
 
 
+def render_markers_to_html(text: str) -> str:
+    return text.replace("[B]", "<b>").replace("[/B]", "</b>")
+
+
 def get_system_prompt(mode: str) -> str:
     if mode == "DAY":
         return LLM_SYSTEM_PROMPT_DAY or LLM_SYSTEM_PROMPT or DEFAULT_SYSTEM_PROMPT
@@ -238,17 +242,27 @@ async def call_llm(messages: List[Dict[str, str]], max_tokens: int, mode: str) -
         return None
 
 
+async def send_rendered_message(
+    message: Message, text: str, reply_markup: Optional[ReplyKeyboardMarkup | InlineKeyboardMarkup] = None
+) -> None:
+    rendered = render_markers_to_html(text)
+    try:
+        await message.answer(rendered, reply_markup=reply_markup, parse_mode=ParseMode.HTML)
+    except Exception as exc:  # noqa: BLE001
+        logging.warning("Не удалось отправить сообщение с HTML-разметкой: %s", exc)
+        await message.answer(text, reply_markup=reply_markup)
+
+
 async def generate_card_day_interpretation(card_name: str) -> str:
-    fallback = (
-        f"<b>Карта дня:</b> {card_name}. " "Интерпретация будет добавлена позже."
-    )
+    fallback = f"[B]Карта дня:[/B] {card_name}. Интерпретация будет добавлена позже."
     messages = [
         {"role": "system", "content": get_system_prompt("DAY")},
         {
             "role": "user",
             "content": (
                 "Контекст: Карта дня. Название карты: "
-                f"{card_name}. Ответ верни в HTML, выдели жирным краткий вывод."
+                f"{card_name}. Используй маркеры [B]...[/B] для выделения ключевого вывода. "
+                "Не используй HTML."
             ),
         },
     ]
@@ -267,14 +281,13 @@ async def generate_three_cards_interpretation(question: str, card_names: List[st
                 f"Вопрос пользователя: {question}\n"
                 f"Карты: {joined_cards}."
                 " Опиши значение каждой карты и общий итог."
-                " Ответ верни в HTML, выдели жирным ключевые выводы."
+                " Используй маркеры [B]...[/B] для выделения ключевых выводов. "
+                "Не используй HTML."
             ),
         },
     ]
 
-    fallback = (
-        "<b>Интерпретация недоступна.</b> " "Позже добавим подробности по раскладу."
-    )
+    fallback = "[B]Интерпретация недоступна.[/B] Позже добавим подробности по раскладу."
     text = await call_llm(messages=messages, max_tokens=LLM_MAX_TOKENS_3, mode="THREE")
     return text or fallback
 
@@ -384,10 +397,7 @@ async def process_card_of_day(message: Message, user: Dict[str, Any], card_files
     card_path = random.choice(card_files)
     await message.answer_photo(FSInputFile(card_path))
     interpretation = await generate_card_day_interpretation(card_path.stem)
-    await message.answer(
-        interpretation,
-        reply_markup=build_menu_keyboard(),
-    )
+    await send_rendered_message(message, interpretation, reply_markup=build_menu_keyboard())
     user["spreads_left"] = max(user.get("spreads_left", 0) - 1, 0)
     save_user_record(message.from_user.id, user)
 
@@ -486,7 +496,7 @@ async def handle_three_card_question(message: Message, state: FSMContext) -> Non
     card_names = [card.stem for card in selected_cards]
     question_text = message.text or ""
     interpretation = await generate_three_cards_interpretation(question_text, card_names)
-    await message.answer(interpretation, reply_markup=build_menu_keyboard())
+    await send_rendered_message(message, interpretation, reply_markup=build_menu_keyboard())
 
     user["spreads_left"] = max(spreads_left - 1, 0)
     save_user_record(message.from_user.id, user)
