@@ -43,6 +43,11 @@ DEFAULT_SYSTEM_PROMPT = (
 LLM_SYSTEM_PROMPT = os.getenv("LLM_SYSTEM_PROMPT", DEFAULT_SYSTEM_PROMPT)
 LLM_SYSTEM_PROMPT_DAY = os.getenv("LLM_SYSTEM_PROMPT_DAY")
 LLM_SYSTEM_PROMPT_3 = os.getenv("LLM_SYSTEM_PROMPT_3")
+LLM_TEMPERATURE = float(os.getenv("LLM_TEMPERATURE", "0.4"))
+LLM_TOP_P = float(os.getenv("LLM_TOP_P", "1.0"))
+LLM_FREQUENCY_PENALTY = float(os.getenv("LLM_FREQUENCY_PENALTY", "0.2"))
+LLM_PRESENCE_PENALTY = float(os.getenv("LLM_PRESENCE_PENALTY", "0.0"))
+LLM_SEED = os.getenv("LLM_SEED")
 DATA_FILE = Path("data/users.json")
 CARDS_DIR = Path("assets/cards")
 CARD_EXTENSIONS = {".png", ".jpg", ".jpeg"}
@@ -224,18 +229,36 @@ async def call_llm(messages: List[Dict[str, str]], max_tokens: int, mode: str) -
             model=LLM_MODEL,
             messages=messages,
             max_tokens=max_tokens,
+            temperature=LLM_TEMPERATURE,
+            top_p=LLM_TOP_P,
+            frequency_penalty=LLM_FREQUENCY_PENALTY,
+            presence_penalty=LLM_PRESENCE_PENALTY,
+            seed=int(LLM_SEED) if LLM_SEED is not None else None,
         )
         usage = getattr(response, "usage", None)
         if usage:
             logging.info(
-                "OpenAI usage mode=%s prompt=%s completion=%s total=%s",
+                "OpenAI usage mode=%s prompt=%s completion=%s total=%s temperature=%s top_p=%s frequency_penalty=%s presence_penalty=%s seed=%s",
                 mode,
                 getattr(usage, "prompt_tokens", None),
                 getattr(usage, "completion_tokens", None),
                 getattr(usage, "total_tokens", None),
+                LLM_TEMPERATURE,
+                LLM_TOP_P,
+                LLM_FREQUENCY_PENALTY,
+                LLM_PRESENCE_PENALTY,
+                LLM_SEED,
             )
         else:
-            logging.info("OpenAI usage missing mode=%s", mode)
+            logging.info(
+                "OpenAI usage missing mode=%s temperature=%s top_p=%s frequency_penalty=%s presence_penalty=%s seed=%s",
+                mode,
+                LLM_TEMPERATURE,
+                LLM_TOP_P,
+                LLM_FREQUENCY_PENALTY,
+                LLM_PRESENCE_PENALTY,
+                LLM_SEED,
+            )
         return response.choices[0].message.content if response.choices else None
     except Exception as exc:  # noqa: BLE001
         logging.warning("Не удалось получить ответ от LLM: %s", exc)
@@ -505,6 +528,14 @@ async def handle_three_card_question(message: Message, state: FSMContext) -> Non
 
 async def main() -> None:
     logging.basicConfig(level=logging.INFO)
+    logging.info(
+        "LLM params temperature=%s top_p=%s frequency_penalty=%s presence_penalty=%s seed=%s",
+        LLM_TEMPERATURE,
+        LLM_TOP_P,
+        LLM_FREQUENCY_PENALTY,
+        LLM_PRESENCE_PENALTY,
+        LLM_SEED,
+    )
     bot = Bot(token=BOT_TOKEN, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
     dispatcher = Dispatcher(storage=MemoryStorage())
     dispatcher.include_router(router)
