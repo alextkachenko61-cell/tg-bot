@@ -36,13 +36,13 @@ LLM_ENABLED = os.getenv("LLM_ENABLED", "1") == "1"
 LLM_MODEL = os.getenv("LLM_MODEL", "gpt-4.1-mini")
 LLM_MAX_TOKENS_DAY = int(os.getenv("LLM_MAX_TOKENS_DAY", "220"))
 LLM_MAX_TOKENS_3 = int(os.getenv("LLM_MAX_TOKENS_3", "420"))
-LLM_SYSTEM_PROMPT = os.getenv(
-    "LLM_SYSTEM_PROMPT",
-    (
-        "Ты помогаешь кратко и нейтрально интерпретировать карты Таро. "
-        "Отвечай на русском языке без мистики и пафоса, лаконично и спокойно."
-    ),
+DEFAULT_SYSTEM_PROMPT = (
+    "Ты помогаешь кратко и нейтрально интерпретировать карты Таро. "
+    "Отвечай на русском языке без мистики и пафоса, лаконично и спокойно."
 )
+LLM_SYSTEM_PROMPT = os.getenv("LLM_SYSTEM_PROMPT", DEFAULT_SYSTEM_PROMPT)
+LLM_SYSTEM_PROMPT_DAY = os.getenv("LLM_SYSTEM_PROMPT_DAY")
+LLM_SYSTEM_PROMPT_3 = os.getenv("LLM_SYSTEM_PROMPT_3")
 DATA_FILE = Path("data/users.json")
 CARDS_DIR = Path("assets/cards")
 CARD_EXTENSIONS = {".png", ".jpg", ".jpeg"}
@@ -203,7 +203,15 @@ def extract_start_payload(message: Message) -> str:
     return parts[1]
 
 
-async def call_llm(messages: List[Dict[str, str]], max_tokens: int) -> Optional[str]:
+def get_system_prompt(mode: str) -> str:
+    if mode == "DAY":
+        return LLM_SYSTEM_PROMPT_DAY or LLM_SYSTEM_PROMPT or DEFAULT_SYSTEM_PROMPT
+    if mode == "THREE":
+        return LLM_SYSTEM_PROMPT_3 or LLM_SYSTEM_PROMPT or DEFAULT_SYSTEM_PROMPT
+    return LLM_SYSTEM_PROMPT or DEFAULT_SYSTEM_PROMPT
+
+
+async def call_llm(messages: List[Dict[str, str]], max_tokens: int, mode: str) -> Optional[str]:
     if not (LLM_ENABLED and openai_client):
         return None
 
@@ -213,6 +221,17 @@ async def call_llm(messages: List[Dict[str, str]], max_tokens: int) -> Optional[
             messages=messages,
             max_tokens=max_tokens,
         )
+        usage = getattr(response, "usage", None)
+        if usage:
+            logging.info(
+                "OpenAI usage mode=%s prompt=%s completion=%s total=%s",
+                mode,
+                getattr(usage, "prompt_tokens", None),
+                getattr(usage, "completion_tokens", None),
+                getattr(usage, "total_tokens", None),
+            )
+        else:
+            logging.info("OpenAI usage missing mode=%s", mode)
         return response.choices[0].message.content if response.choices else None
     except Exception as exc:  # noqa: BLE001
         logging.warning("Не удалось получить ответ от LLM: %s", exc)
@@ -224,7 +243,7 @@ async def generate_card_day_interpretation(card_name: str) -> str:
         f"<b>Карта дня:</b> {card_name}. " "Интерпретация будет добавлена позже."
     )
     messages = [
-        {"role": "system", "content": LLM_SYSTEM_PROMPT},
+        {"role": "system", "content": get_system_prompt("DAY")},
         {
             "role": "user",
             "content": (
@@ -234,14 +253,14 @@ async def generate_card_day_interpretation(card_name: str) -> str:
         },
     ]
 
-    text = await call_llm(messages=messages, max_tokens=LLM_MAX_TOKENS_DAY)
+    text = await call_llm(messages=messages, max_tokens=LLM_MAX_TOKENS_DAY, mode="DAY")
     return text or fallback
 
 
 async def generate_three_cards_interpretation(question: str, card_names: List[str]) -> str:
     joined_cards = ", ".join(card_names)
     messages = [
-        {"role": "system", "content": LLM_SYSTEM_PROMPT},
+        {"role": "system", "content": get_system_prompt("THREE")},
         {
             "role": "user",
             "content": (
@@ -256,7 +275,7 @@ async def generate_three_cards_interpretation(question: str, card_names: List[st
     fallback = (
         "<b>Интерпретация недоступна.</b> " "Позже добавим подробности по раскладу."
     )
-    text = await call_llm(messages=messages, max_tokens=LLM_MAX_TOKENS_3)
+    text = await call_llm(messages=messages, max_tokens=LLM_MAX_TOKENS_3, mode="THREE")
     return text or fallback
 
 
