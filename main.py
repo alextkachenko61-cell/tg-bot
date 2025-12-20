@@ -3,6 +3,7 @@ import json
 import logging
 import os
 import random
+from datetime import datetime, timedelta, timezone
 from io import BytesIO
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -48,6 +49,9 @@ LLM_TOP_P = float(os.getenv("LLM_TOP_P", "1.0"))
 LLM_FREQUENCY_PENALTY = float(os.getenv("LLM_FREQUENCY_PENALTY", "0.2"))
 LLM_PRESENCE_PENALTY = float(os.getenv("LLM_PRESENCE_PENALTY", "0.0"))
 LLM_SEED = os.getenv("LLM_SEED")
+DAILY_SPREAD_COOLDOWN = timedelta(hours=24)
+DAILY_GIFT_COOLDOWN = timedelta(hours=24)
+CLARIFY_COST = 10
 DATA_FILE = Path("data/users.json")
 CARDS_DIR = Path("assets/cards")
 CARD_EXTENSIONS = {".png", ".jpg", ".jpeg"}
@@ -56,6 +60,12 @@ DEFAULT_USER = {
     "free_granted": False,
     "invited_count": 0,
     "referred_by": None,
+    "registration_date": None,
+    "diamonds": 0,
+    "last_daily_spread_at": None,
+    "last_daily_gift_at": None,
+    "daily_spread_count": 0,
+    "last_daily_card": None,
 }
 
 if not BOT_TOKEN:
@@ -73,6 +83,7 @@ router = Router()
 
 class SpreadStates(StatesGroup):
     waiting_for_question = State()
+    waiting_for_clarify = State()
 
 
 def ensure_data_file() -> None:
@@ -98,6 +109,8 @@ def save_users(users: Dict[str, Dict[str, Any]]) -> None:
 
 def ensure_user_defaults(user: Dict[str, Any]) -> Dict[str, Any]:
     updated = {**DEFAULT_USER, **(user or {})}
+    if not updated.get("registration_date"):
+        updated["registration_date"] = datetime.now(timezone.utc).isoformat()
     return updated
 
 
@@ -120,6 +133,8 @@ def build_menu_keyboard() -> ReplyKeyboardMarkup:
     builder = ReplyKeyboardBuilder()
     builder.button(text="Получить расклад")
     builder.button(text="Меню")
+    builder.button(text="🎁 Подарок")
+    builder.button(text="Профиль")
     builder.adjust(2)
     return builder.as_markup(resize_keyboard=True)
 
@@ -141,6 +156,14 @@ def build_premium_keyboard() -> ReplyKeyboardMarkup:
     builder = ReplyKeyboardBuilder()
     builder.button(text="Premium")
     builder.button(text="Пригласить друга")
+    builder.adjust(2)
+    return builder.as_markup(resize_keyboard=True)
+
+
+def build_clarify_keyboard() -> ReplyKeyboardMarkup:
+    builder = ReplyKeyboardBuilder()
+    builder.button(text="Уточняющий вопрос 10💎")
+    builder.button(text="Меню")
     builder.adjust(2)
     return builder.as_markup(resize_keyboard=True)
 
@@ -210,6 +233,71 @@ def extract_start_payload(message: Message) -> str:
 
 def render_markers_to_html(text: str) -> str:
     return text.replace("[B]", "<b>").replace("[/B]", "</b>")
+
+
+def iso_to_datetime(value: Optional[str]) -> Optional[datetime]:
+    if not value:
+        return None
+    try:
+        dt = datetime.fromisoformat(value)
+        if dt.tzinfo is None:
+            return dt.replace(tzinfo=timezone.utc)
+        return dt
+    except ValueError:
+        return None
+
+
+def now_utc() -> datetime:
+    return datetime.now(timezone.utc)
+
+
+def is_on_cooldown(last_ts: Optional[str], cooldown: timedelta) -> tuple[bool, int]:
+    last_dt = iso_to_datetime(last_ts)
+    if not last_dt:
+        return False, 0
+    elapsed = now_utc() - last_dt
+    remaining = cooldown - elapsed
+    remaining_seconds = int(remaining.total_seconds())
+    return remaining_seconds > 0, max(0, remaining_seconds)
+
+
+def format_remaining(seconds: int) -> str:
+    hours, rem = divmod(seconds, 3600)
+    minutes, _ = divmod(rem, 60)
+    parts = []
+    if hours:
+        parts.append(f"{hours}ч")
+    if minutes or not parts:
+        parts.append(f"{minutes}м")
+    return " ".join(parts)
+
+
+def evaluate_slot_reward(value: int) -> tuple[int, str]:
+    if value >= 64:
+        return 30, "💎 Джекпот — Жабка даёт 30 кристалликов"
+    if value >= 50:
+        return 15, "🎰 Три одинаковых — Жабка даёт 15 кристалликов"
+    return 5, "❌ Не совпало — Жабка даёт 5 кристалликов"
+
+
+def format_profile_text(user: Dict[str, Any]) -> str:
+    reg_dt = iso_to_datetime(user.get("registration_date"))
+    reg_str = reg_dt.strftime("%Y-%m-%d %H:%M UTC") if reg_dt else "неизвестно"
+    diamonds = user.get("diamonds", 0)
+    invited = user.get("invited_count", 0)
+    daily_count = user.get("daily_spread_count", 0)
+    spreads_left = user.get("spreads_left", 0)
+    last_daily_card = user.get("last_daily_card")
+    daily_card_text = last_daily_card or "ещё не было"
+    return (
+        "[B]Профиль[/B]\n"
+        f"Дата регистрации: {reg_str}\n"
+        f"Алмазики: {diamonds}💎\n"
+        f"Приглашённых друзей: {invited}\n"
+        f"Получено раскладов дня: {daily_count}\n"
+        f"Доступно раскладов: {spreads_left}\n"
+        f"Последняя карта дня: {daily_card_text}"
+    )
 
 
 def get_system_prompt(mode: str) -> str:
@@ -315,6 +403,24 @@ async def generate_three_cards_interpretation(question: str, card_names: List[st
     return text or fallback
 
 
+async def generate_clarify_interpretation(card_name: str, question: str) -> str:
+    messages = [
+        {"role": "system", "content": get_system_prompt("DAY")},
+        {
+            "role": "user",
+            "content": (
+                "Контекст: уточняющий вопрос по карте дня.\n"
+                f"Карта: {card_name}.\n"
+                f"Вопрос: {question}.\n"
+                "Используй маркеры [B]...[/B] для выделения ключевых выводов. Не используй HTML."
+            ),
+        },
+    ]
+    fallback = "[B]Уточнение временно недоступно.[/B] Попробуйте позже."
+    text = await call_llm(messages=messages, max_tokens=LLM_MAX_TOKENS_DAY, mode="DAY")
+    return text or fallback
+
+
 @router.message(CommandStart())
 async def handle_start(message: Message, bot: Bot) -> None:
     users = load_users()
@@ -390,9 +496,23 @@ async def handle_menu(message: Message, state: FSMContext) -> None:
     await state.clear()
     user = get_user_record(message.from_user.id)
     spreads_left = user.get("spreads_left", 0)
+    diamonds = user.get("diamonds", 0)
+    on_cooldown, remaining = is_on_cooldown(user.get("last_daily_spread_at"), DAILY_SPREAD_COOLDOWN)
+    daily_status = f"через {format_remaining(remaining)}" if on_cooldown else "доступен"
 
     await message.answer(
-        f"Доступно раскладов: {spreads_left}",
+        f"Доступно раскладов: {spreads_left}\nАлмазики: {diamonds}💎\nКарта дня: {daily_status}",
+        reply_markup=build_menu_keyboard(),
+    )
+
+
+@router.message(F.text == "Профиль")
+async def handle_profile(message: Message, state: FSMContext) -> None:
+    await state.clear()
+    user = get_user_record(message.from_user.id)
+    await send_rendered_message(
+        message,
+        format_profile_text(user),
         reply_markup=build_menu_keyboard(),
     )
 
@@ -420,8 +540,10 @@ async def process_card_of_day(message: Message, user: Dict[str, Any], card_files
     card_path = random.choice(card_files)
     await message.answer_photo(FSInputFile(card_path))
     interpretation = await generate_card_day_interpretation(card_path.stem)
-    await send_rendered_message(message, interpretation, reply_markup=build_menu_keyboard())
-    user["spreads_left"] = max(user.get("spreads_left", 0) - 1, 0)
+    await send_rendered_message(message, interpretation, reply_markup=build_clarify_keyboard())
+    user["last_daily_spread_at"] = now_utc().isoformat()
+    user["daily_spread_count"] = user.get("daily_spread_count", 0) + 1
+    user["last_daily_card"] = card_path.stem
     save_user_record(message.from_user.id, user)
 
 
@@ -430,14 +552,6 @@ async def handle_spread_choice(message: Message, state: FSMContext) -> None:
     await state.clear()
     user = get_user_record(message.from_user.id)
     spreads_left = user.get("spreads_left", 0)
-
-    if spreads_left <= 0:
-        await message.answer(
-            "К сожалению, у вас закончились расклады. Вы можете приобрести premium либо получить бесплатный расклад за каждого приглашенного друга.",
-            reply_markup=build_premium_keyboard(),
-        )
-        return
-
     card_files = load_card_files()
     if not card_files:
         await message.answer(
@@ -447,7 +561,21 @@ async def handle_spread_choice(message: Message, state: FSMContext) -> None:
         return
 
     if message.text == "Карта дня":
+        on_cooldown, remaining = is_on_cooldown(user.get("last_daily_spread_at"), DAILY_SPREAD_COOLDOWN)
+        if on_cooldown:
+            await message.answer(
+                f"Расклад дня будет доступен через {format_remaining(remaining)}.",
+                reply_markup=build_menu_keyboard(),
+            )
+            return
         await process_card_of_day(message, user, card_files)
+        return
+
+    if spreads_left <= 0:
+        await message.answer(
+            "К сожалению, у вас закончились расклады. Вы можете приобрести premium либо получить бесплатный расклад за каждого приглашенного друга.",
+            reply_markup=build_premium_keyboard(),
+        )
         return
 
     if len(card_files) < 3:
@@ -484,8 +612,68 @@ async def handle_invite_friend(message: Message, bot: Bot) -> None:
     )
 
 
+@router.message(F.text == "🎁 Подарок")
+async def handle_daily_gift(message: Message, state: FSMContext) -> None:
+    await state.clear()
+    user = get_user_record(message.from_user.id)
+    on_cooldown, remaining = is_on_cooldown(user.get("last_daily_gift_at"), DAILY_GIFT_COOLDOWN)
+    if on_cooldown:
+        await message.answer(
+            f"Подарок будет доступен через {format_remaining(remaining)}.",
+            reply_markup=build_menu_keyboard(),
+        )
+        return
+
+    dice_msg = await message.answer_dice(emoji="🎰")
+    dice_value = dice_msg.dice.value if dice_msg.dice else 0
+    reward, outcome_text = evaluate_slot_reward(dice_value)
+
+    user["diamonds"] = user.get("diamonds", 0) + reward
+    user["last_daily_gift_at"] = now_utc().isoformat()
+    save_user_record(message.from_user.id, user)
+
+    await send_rendered_message(
+        message,
+        "[B]🐸 Ежедневный подарок от Жабки[/B]\n"
+        "Раз в 24 часа Жабка даёт тебе небольшой бонус.\n"
+        f"{outcome_text}\n"
+        f"Теперь у тебя {user['diamonds']}💎",
+        reply_markup=build_menu_keyboard(),
+    )
+
+
+@router.message(F.text == "Уточняющий вопрос 10💎")
+async def handle_clarify_request(message: Message, state: FSMContext) -> None:
+    await state.clear()
+    user = get_user_record(message.from_user.id)
+    card_name = user.get("last_daily_card")
+    if not card_name:
+        await message.answer("Сначала получите расклад дня.", reply_markup=build_menu_keyboard())
+        return
+    diamonds = user.get("diamonds", 0)
+    if diamonds < CLARIFY_COST:
+        await message.answer(
+            f"Недостаточно алмазиков: {diamonds}💎. Нужно {CLARIFY_COST}💎.",
+            reply_markup=build_menu_keyboard(),
+        )
+        return
+
+    await state.set_state(SpreadStates.waiting_for_clarify)
+    await state.update_data(card_name=card_name)
+    await message.answer(
+        f"Напишите уточняющий вопрос одним сообщением. Стоимость {CLARIFY_COST}💎 будет списана после ответа.",
+        reply_markup=build_cancel_keyboard(),
+    )
+
+
 @router.message(SpreadStates.waiting_for_question, F.text == "Отмена")
 async def handle_cancel_question(message: Message, state: FSMContext) -> None:
+    await state.clear()
+    await message.answer("Действие отменено.", reply_markup=build_menu_keyboard())
+
+
+@router.message(SpreadStates.waiting_for_clarify, F.text == "Отмена")
+async def handle_cancel_clarify(message: Message, state: FSMContext) -> None:
     await state.clear()
     await message.answer("Действие отменено.", reply_markup=build_menu_keyboard())
 
@@ -523,6 +711,33 @@ async def handle_three_card_question(message: Message, state: FSMContext) -> Non
 
     user["spreads_left"] = max(spreads_left - 1, 0)
     save_user_record(message.from_user.id, user)
+    await state.clear()
+
+
+@router.message(SpreadStates.waiting_for_clarify)
+async def handle_clarify_question(message: Message, state: FSMContext) -> None:
+    user = get_user_record(message.from_user.id)
+    diamonds = user.get("diamonds", 0)
+    if diamonds < CLARIFY_COST:
+        await state.clear()
+        await message.answer(
+            f"Недостаточно алмазиков: {diamonds}💎. Нужно {CLARIFY_COST}💎.",
+            reply_markup=build_menu_keyboard(),
+        )
+        return
+
+    data = await state.get_data()
+    card_name = data.get("card_name") or user.get("last_daily_card")
+    if not card_name:
+        await state.clear()
+        await message.answer("Карта дня не найдена. Сначала получите расклад дня.", reply_markup=build_menu_keyboard())
+        return
+
+    question_text = message.text or ""
+    interpretation = await generate_clarify_interpretation(card_name, question_text)
+    user["diamonds"] = max(0, diamonds - CLARIFY_COST)
+    save_user_record(message.from_user.id, user)
+    await send_rendered_message(message, interpretation, reply_markup=build_menu_keyboard())
     await state.clear()
 
 
