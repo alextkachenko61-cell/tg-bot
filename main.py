@@ -131,18 +131,18 @@ def build_subscription_keyboard() -> InlineKeyboardMarkup:
 
 def build_menu_keyboard() -> ReplyKeyboardMarkup:
     builder = ReplyKeyboardBuilder()
-    builder.button(text="Получить расклад")
-    builder.button(text="Меню")
+    builder.button(text="🔮 Получить расклад")
     builder.button(text="🎁 Подарок")
-    builder.button(text="Профиль")
+    builder.button(text="⚙️ Профиль")
     builder.adjust(2)
     return builder.as_markup(resize_keyboard=True)
 
 
-def build_spread_options_keyboard() -> ReplyKeyboardMarkup:
+def build_spread_entry_keyboard() -> ReplyKeyboardMarkup:
     builder = ReplyKeyboardBuilder()
-    builder.button(text="Карта дня")
-    builder.button(text="Расклад из 3 карт")
+    builder.button(text="🃏 Расклад дня")
+    builder.button(text="🗝️ Продвинутые расклады")
+    builder.button(text="⬅️ В меню")
     return builder.as_markup(resize_keyboard=True)
 
 
@@ -163,9 +163,24 @@ def build_premium_keyboard() -> ReplyKeyboardMarkup:
 def build_clarify_keyboard() -> ReplyKeyboardMarkup:
     builder = ReplyKeyboardBuilder()
     builder.button(text="Уточняющий вопрос 10💎")
-    builder.button(text="Меню")
+    builder.button(text="⬅️ В меню")
     builder.adjust(2)
     return builder.as_markup(resize_keyboard=True)
+
+
+def build_advanced_spread_keyboard() -> ReplyKeyboardMarkup:
+    builder = ReplyKeyboardBuilder()
+    builder.button(text="Расклад из 3 карт")
+    builder.button(text="⬅️ В меню")
+    builder.adjust(2)
+    return builder.as_markup(resize_keyboard=True)
+
+
+def build_gift_inline_keyboard() -> InlineKeyboardMarkup:
+    builder = InlineKeyboardBuilder()
+    builder.button(text="Крутить слот 🎰", callback_data="roll_daily_gift")
+    builder.adjust(1)
+    return builder.as_markup()
 
 
 def load_card_files() -> List[Path]:
@@ -491,7 +506,7 @@ async def handle_check_subscription(callback: CallbackQuery, bot: Bot) -> None:
     )
 
 
-@router.message(F.text == "Меню")
+@router.message(F.text.in_({"Меню", "⬅️ В меню"}))
 async def handle_menu(message: Message, state: FSMContext) -> None:
     await state.clear()
     user = get_user_record(message.from_user.id)
@@ -506,7 +521,7 @@ async def handle_menu(message: Message, state: FSMContext) -> None:
     )
 
 
-@router.message(F.text == "Профиль")
+@router.message(F.text.in_({"Профиль", "⚙️ Профиль"}))
 async def handle_profile(message: Message, state: FSMContext) -> None:
     await state.clear()
     user = get_user_record(message.from_user.id)
@@ -517,22 +532,12 @@ async def handle_profile(message: Message, state: FSMContext) -> None:
     )
 
 
-@router.message(F.text == "Получить расклад")
+@router.message(F.text.in_({"Получить расклад", "🔮 Получить расклад"}))
 async def handle_get_spread(message: Message, state: FSMContext) -> None:
     await state.clear()
-    user = get_user_record(message.from_user.id)
-    spreads_left = user.get("spreads_left", 0)
-
-    if spreads_left <= 0:
-        await message.answer(
-            "К сожалению, у вас закончились расклады. Вы можете приобрести premium либо получить бесплатный расклад за каждого приглашенного друга.",
-            reply_markup=build_premium_keyboard(),
-        )
-        return
-
     await message.answer(
-        "Выберите тип расклада:",
-        reply_markup=build_spread_options_keyboard(),
+        "Выберите действие:",
+        reply_markup=build_spread_entry_keyboard(),
     )
 
 
@@ -547,11 +552,10 @@ async def process_card_of_day(message: Message, user: Dict[str, Any], card_files
     save_user_record(message.from_user.id, user)
 
 
-@router.message(F.text.in_({"Карта дня", "Расклад из 3 карт"}))
-async def handle_spread_choice(message: Message, state: FSMContext) -> None:
+@router.message(F.text.in_({"🃏 Расклад дня", "Карта дня"}))
+async def handle_daily_spread(message: Message, state: FSMContext) -> None:
     await state.clear()
     user = get_user_record(message.from_user.id)
-    spreads_left = user.get("spreads_left", 0)
     card_files = load_card_files()
     if not card_files:
         await message.answer(
@@ -560,16 +564,45 @@ async def handle_spread_choice(message: Message, state: FSMContext) -> None:
         )
         return
 
-    if message.text == "Карта дня":
-        on_cooldown, remaining = is_on_cooldown(user.get("last_daily_spread_at"), DAILY_SPREAD_COOLDOWN)
-        if on_cooldown:
-            await message.answer(
-                f"Расклад дня будет доступен через {format_remaining(remaining)}.",
-                reply_markup=build_menu_keyboard(),
-            )
-            return
-        await process_card_of_day(message, user, card_files)
+    on_cooldown, remaining = is_on_cooldown(user.get("last_daily_spread_at"), DAILY_SPREAD_COOLDOWN)
+    if on_cooldown:
+        await message.answer(
+            f"Расклад дня будет доступен через {format_remaining(remaining)}.",
+            reply_markup=build_menu_keyboard(),
+        )
         return
+
+    await process_card_of_day(message, user, card_files)
+
+
+@router.message(F.text == "🗝️ Продвинутые расклады")
+async def handle_advanced_entry(message: Message, state: FSMContext) -> None:
+    await state.clear()
+    user = get_user_record(message.from_user.id)
+    spreads_left = user.get("spreads_left", 0)
+    if spreads_left <= 0:
+        await message.answer(
+            "К сожалению, у вас закончились расклады. Вы можете приобрести premium либо получить бесплатный расклад за каждого приглашенного друга.",
+            reply_markup=build_premium_keyboard(),
+        )
+        return
+
+    card_files = load_card_files()
+    if len(card_files) < 3:
+        await message.answer(
+            "Недостаточно карт в базе, добавьте не менее 3 изображений в assets/cards.",
+            reply_markup=build_menu_keyboard(),
+        )
+        return
+
+    await message.answer("Выберите расклад:", reply_markup=build_advanced_spread_keyboard())
+
+
+@router.message(F.text == "Расклад из 3 карт")
+async def handle_advanced_spread_choice(message: Message, state: FSMContext) -> None:
+    await state.clear()
+    user = get_user_record(message.from_user.id)
+    spreads_left = user.get("spreads_left", 0)
 
     if spreads_left <= 0:
         await message.answer(
@@ -578,6 +611,7 @@ async def handle_spread_choice(message: Message, state: FSMContext) -> None:
         )
         return
 
+    card_files = load_card_files()
     if len(card_files) < 3:
         await message.answer(
             "Недостаточно карт в базе, добавьте не менее 3 изображений в assets/cards.",
@@ -624,20 +658,39 @@ async def handle_daily_gift(message: Message, state: FSMContext) -> None:
         )
         return
 
-    dice_msg = await message.answer_dice(emoji="🎰")
-    dice_value = dice_msg.dice.value if dice_msg.dice else 0
-    reward, outcome_text = evaluate_slot_reward(dice_value)
-
-    user["diamonds"] = user.get("diamonds", 0) + reward
-    user["last_daily_gift_at"] = now_utc().isoformat()
-    save_user_record(message.from_user.id, user)
-
     await send_rendered_message(
         message,
         "[B]🐸 Ежедневный подарок от Жабки[/B]\n"
         "Раз в 24 часа Жабка даёт тебе небольшой бонус.\n"
-        f"{outcome_text}\n"
-        f"Теперь у тебя {user['diamonds']}💎",
+        "❌ Не совпало — Жабка даёт 5 кристалликов\n"
+        "🎰 Три одинаковых — Жабка даёт 15 кристалликов\n"
+        "💎 Джекпот — Жабка даёт 30 кристалликов",
+        reply_markup=build_gift_inline_keyboard(),
+    )
+
+
+@router.callback_query(F.data == "roll_daily_gift")
+async def handle_roll_daily_gift(callback: CallbackQuery) -> None:
+    await callback.answer()
+    user = get_user_record(callback.from_user.id)
+    on_cooldown, remaining = is_on_cooldown(user.get("last_daily_gift_at"), DAILY_GIFT_COOLDOWN)
+    if on_cooldown:
+        await callback.message.answer(
+            f"Подарок будет доступен через {format_remaining(remaining)}.",
+            reply_markup=build_menu_keyboard(),
+        )
+        return
+
+    dice_msg = await callback.message.answer_dice(emoji="🎰")
+    dice_value = dice_msg.dice.value if dice_msg.dice else 0
+    reward, _ = evaluate_slot_reward(dice_value)
+
+    user["diamonds"] = user.get("diamonds", 0) + reward
+    user["last_daily_gift_at"] = now_utc().isoformat()
+    save_user_record(callback.from_user.id, user)
+
+    await callback.message.answer(
+        f"Вы выиграли {reward}💎!\nТеперь у тебя {user['diamonds']}💎",
         reply_markup=build_menu_keyboard(),
     )
 
