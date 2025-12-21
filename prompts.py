@@ -1,6 +1,11 @@
+import os
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Dict, List, Optional
+
+from dotenv import load_dotenv
+
+load_dotenv(".env.spreads", override=True)
 
 DEFAULT_SYSTEM_PROMPT = (
     "Ты помогаешь кратко и нейтрально интерпретировать карты Таро. "
@@ -45,6 +50,132 @@ PROMPT_REGISTRY: Dict[str, PromptConfig] = {
             "Используй маркеры [B]...[/B] для выделения ключевых выводов. Не используй HTML."
         ),
     ),
+    "REL_HAS_OTHER": PromptConfig(
+        key="REL_HAS_OTHER",
+        mode="THREE",
+        user_template=(
+            "Тема: отношения. Вопрос: {question}\n"
+            "Карты: {cards}. Дай краткий разбор и общий вывод. "
+            "Используй [B]...[/B] для ключевых тезисов. Не используй HTML."
+        ),
+    ),
+    "REL_IS_CHEATING": PromptConfig(
+        key="REL_IS_CHEATING",
+        mode="THREE",
+        user_template=(
+            "Тема: отношения. Вопрос: {question}\n"
+            "Карты: {cards}. Ответь, изменял ли партнёр, выдели кратко выводы. "
+            "Используй [B]...[/B], не используй HTML."
+        ),
+    ),
+    "REL_TRUE_LOVE": PromptConfig(
+        key="REL_TRUE_LOVE",
+        mode="THREE",
+        user_template=(
+            "Тема: отношения. Вопрос: {question}\n"
+            "Карты: {cards}. Определи, любит ли он на самом деле, дай общий вывод. "
+            "Используй [B]...[/B], не используй HTML."
+        ),
+    ),
+    "REL_OWN_WOMAN": PromptConfig(
+        key="REL_OWN_WOMAN",
+        mode="THREE",
+        user_template=(
+            "Тема: отношения. Вопрос: {question}\n"
+            "Карты: {cards}. Ответь, считает ли он меня своей женщиной, дай общий вывод. "
+            "Используй [B]...[/B], не используй HTML."
+        ),
+    ),
+    "REL_LEAVE_ME": PromptConfig(
+        key="REL_LEAVE_ME",
+        mode="THREE",
+        user_template=(
+            "Тема: отношения. Вопрос: {question}\n"
+            "Карты: {cards}. Ответь, уйдёт ли он от меня, выдели ключевые выводы. "
+            "Используй [B]...[/B], не используй HTML."
+        ),
+    ),
+    "FIN_SOON_MONEY": PromptConfig(
+        key="FIN_SOON_MONEY",
+        mode="THREE",
+        user_template=(
+            "Тема: финансы. Вопрос: {question}\n"
+            "Карты: {cards}. Ответь, будут ли деньги в ближайшее время, дай общий вывод. "
+            "Используй [B]...[/B], не используй HTML."
+        ),
+    ),
+    "FIN_NO_STICK": PromptConfig(
+        key="FIN_NO_STICK",
+        mode="THREE",
+        user_template=(
+            "Тема: финансы. Вопрос: {question}\n"
+            "Карты: {cards}. Объясни, почему деньги не задерживаются, и дай рекомендации. "
+            "Используй [B]...[/B], не используй HTML."
+        ),
+    ),
+    "FIN_SPEND_OR_SAVE": PromptConfig(
+        key="FIN_SPEND_OR_SAVE",
+        mode="THREE",
+        user_template=(
+            "Тема: финансы. Вопрос: {question}\n"
+            "Карты: {cards}. Сравни тратить или экономить, дай общий вывод. "
+            "Используй [B]...[/B], не используй HTML."
+        ),
+    ),
+    "FIN_FIND_SPONSOR": PromptConfig(
+        key="FIN_FIND_SPONSOR",
+        mode="THREE",
+        user_template=(
+            "Тема: финансы. Вопрос: {question}\n"
+            "Карты: {cards}. Ответь, найду ли я того, кто меня обеспечит, дай краткий итог. "
+            "Используй [B]...[/B], не используй HTML."
+        ),
+    ),
+    "SELF_LIE": PromptConfig(
+        key="SELF_LIE",
+        mode="THREE",
+        user_template=(
+            "Тема: про себя. Вопрос: {question}\n"
+            "Карты: {cards}. Подскажи, где я себе лгу, выдели ключевые выводы. "
+            "Используй [B]...[/B], не используй HTML."
+        ),
+    ),
+    "SELF_BLOCKS": PromptConfig(
+        key="SELF_BLOCKS",
+        mode="THREE",
+        user_template=(
+            "Тема: про себя. Вопрос: {question}\n"
+            "Карты: {cards}. Что реально меня сдерживает? Дай краткий итог. "
+            "Используй [B]...[/B], не используй HTML."
+        ),
+    ),
+    "SELF_WANT": PromptConfig(
+        key="SELF_WANT",
+        mode="THREE",
+        user_template=(
+            "Тема: про себя. Вопрос: {question}\n"
+            "Карты: {cards}. Чего я на самом деле хочу? Выдели ключевые выводы. "
+            "Используй [B]...[/B], не используй HTML."
+        ),
+    ),
+    "SELF_CONFLICT": PromptConfig(
+        key="SELF_CONFLICT",
+        mode="THREE",
+        user_template=(
+            "Тема: про себя. Вопрос: {question}\n"
+            "Карты: {cards}. В чём мой внутренний конфликт? Дай общий вывод. "
+            "Используй [B]...[/B], не используй HTML."
+        ),
+    ),
+    "SELF_ROLE": PromptConfig(
+        key="SELF_ROLE",
+        mode="THREE",
+        user_template=(
+            "Тема: про себя. Вопрос: {question}\n"
+            "Карты: {cards}. Какую роль я сейчас играю? Подчеркни ключевые выводы. "
+            "Используй [B]...[/B], не используй HTML."
+        ),
+    ),
 }
 
 
@@ -63,6 +194,10 @@ def resolve_system_prompt(
 
 
 def load_prompt_override(prompt_key: str) -> Optional[str]:
+    env_value = os.getenv(f"SPREAD_PROMPT_{prompt_key.upper()}")
+    if env_value:
+        return env_value
+
     file_path = Path("prompts") / f"{prompt_key}.txt"
     if file_path.exists():
         try:
