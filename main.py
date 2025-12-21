@@ -67,6 +67,26 @@ DEFAULT_USER = {
     "daily_spread_count": 0,
     "last_daily_card": None,
 }
+RELATION_SPREADS = [
+    "Есть ли у него другая?",
+    "Изменял ли он мне?",
+    "Любит ли он меня на самом деле?",
+    "Считает ли он меня «своей женщиной»?",
+    "Уйдёт ли он от меня?",
+]
+FINANCE_SPREADS = [
+    "Будут ли у меня деньги в ближайшее время?",
+    "Почему деньги не задерживаются?",
+    "Тратить на себя или экономить?",
+    "Найду ли я того кто меня обеспечит?",
+]
+SELF_SPREADS = [
+    "Где ты врёшь себе",
+    "Что тебя реально сдерживает",
+    "Чего ты на самом деле хочешь",
+    "В чём твой внутренний конфликт",
+    "Какую роль ты сейчас играешь",
+]
 
 if not BOT_TOKEN:
     raise RuntimeError("BOT_TOKEN is not set. Please provide it in the environment or .env file.")
@@ -129,11 +149,18 @@ def build_subscription_keyboard() -> InlineKeyboardMarkup:
     return builder.as_markup()
 
 
+def build_start_journey_keyboard() -> InlineKeyboardMarkup:
+    builder = InlineKeyboardBuilder()
+    builder.button(text="Начать путешествие 🔮", callback_data="start_journey")
+    builder.adjust(1)
+    return builder.as_markup()
+
+
 def build_menu_keyboard() -> ReplyKeyboardMarkup:
     builder = ReplyKeyboardBuilder()
     builder.button(text="🔮 Получить расклад")
-    builder.button(text="🎁 Подарок")
-    builder.button(text="⚙️ Профиль")
+    builder.button(text="Получить 💎")
+    builder.button(text="Профиль")
     builder.adjust(2)
     return builder.as_markup(resize_keyboard=True)
 
@@ -179,6 +206,34 @@ def build_advanced_spread_keyboard() -> ReplyKeyboardMarkup:
 def build_gift_inline_keyboard() -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
     builder.button(text="Крутить слот 🎰", callback_data="roll_daily_gift")
+    builder.adjust(1)
+    return builder.as_markup()
+
+
+def build_spread_inline_keyboard() -> InlineKeyboardMarkup:
+    builder = InlineKeyboardBuilder()
+    builder.button(text="🃏 Расклад дня", callback_data="spread_daily")
+    builder.button(text="🗝️ Продвинутые расклады", callback_data="spread_advanced")
+    builder.button(text="⬅️ Назад", callback_data="spread_back")
+    builder.adjust(1)
+    return builder.as_markup()
+
+
+def build_advanced_categories_keyboard() -> InlineKeyboardMarkup:
+    builder = InlineKeyboardBuilder()
+    builder.button(text="❤️ Отношения", callback_data="adv_relations")
+    builder.button(text="💰 Финансы", callback_data="adv_finance")
+    builder.button(text="🪞 Про себя", callback_data="adv_self")
+    builder.button(text="⬅️ Назад", callback_data="spread_menu")
+    builder.adjust(1)
+    return builder.as_markup()
+
+
+def build_leaf_keyboard(options: List[str], prefix: str) -> InlineKeyboardMarkup:
+    builder = InlineKeyboardBuilder()
+    for idx, option in enumerate(options):
+        builder.button(text=option, callback_data=f"{prefix}:{idx}")
+    builder.button(text="⬅️ Назад", callback_data="spread_advanced")
     builder.adjust(1)
     return builder.as_markup()
 
@@ -501,8 +556,10 @@ async def handle_check_subscription(callback: CallbackQuery, bot: Bot) -> None:
         save_user_record(callback.from_user.id, user)
 
     await callback.message.answer(
-        f"Вам начислен бесплатный расклад, раскладов доступно: {spreads_left}",
-        reply_markup=build_menu_keyboard(),
+        "Привет, меня зовут Таро Жабка 🐸\n"
+        "Если тебе что-то не даёт покоя — давай сделаем расклад и посмотрим, в чём дело.\n"
+        "Со мной ты можешь разобрать любую тему и получить ясный ответ.",
+        reply_markup=build_start_journey_keyboard(),
     )
 
 
@@ -532,12 +589,51 @@ async def handle_profile(message: Message, state: FSMContext) -> None:
     )
 
 
+@router.callback_query(F.data == "start_journey")
+async def handle_start_journey(callback: CallbackQuery) -> None:
+    await callback.answer()
+    await callback.message.answer(
+        "Выберите действие:",
+        reply_markup=build_menu_keyboard(),
+    )
+
+
+@router.callback_query(F.data == "spread_menu")
+async def handle_spread_menu_callback(callback: CallbackQuery) -> None:
+    await callback.answer()
+    await callback.message.answer(
+        "Тут ты можешь получить расклад.",
+        reply_markup=build_spread_inline_keyboard(),
+    )
+
+
 @router.message(F.text.in_({"Получить расклад", "🔮 Получить расклад"}))
 async def handle_get_spread(message: Message, state: FSMContext) -> None:
     await state.clear()
     await message.answer(
-        "Выберите действие:",
-        reply_markup=build_spread_entry_keyboard(),
+        "Тут ты можешь получить расклад.",
+        reply_markup=build_spread_inline_keyboard(),
+    )
+
+
+@router.callback_query(F.data == "spread_daily")
+async def handle_spread_daily_inline(callback: CallbackQuery) -> None:
+    await callback.answer()
+    await trigger_daily_spread(callback.from_user.id, callback.message)
+
+
+@router.callback_query(F.data == "spread_advanced")
+async def handle_spread_advanced_inline(callback: CallbackQuery) -> None:
+    await callback.answer()
+    await callback.message.answer("Выберите направление:", reply_markup=build_advanced_categories_keyboard())
+
+
+@router.callback_query(F.data == "spread_back")
+async def handle_spread_back(callback: CallbackQuery) -> None:
+    await callback.answer()
+    await callback.message.answer(
+        "Возвращаю в меню.",
+        reply_markup=build_menu_keyboard(),
     )
 
 
@@ -552,10 +648,8 @@ async def process_card_of_day(message: Message, user: Dict[str, Any], card_files
     save_user_record(message.from_user.id, user)
 
 
-@router.message(F.text.in_({"🃏 Расклад дня", "Карта дня"}))
-async def handle_daily_spread(message: Message, state: FSMContext) -> None:
-    await state.clear()
-    user = get_user_record(message.from_user.id)
+async def trigger_daily_spread(user_id: int, message: Message) -> None:
+    user = get_user_record(user_id)
     card_files = load_card_files()
     if not card_files:
         await message.answer(
@@ -575,27 +669,16 @@ async def handle_daily_spread(message: Message, state: FSMContext) -> None:
     await process_card_of_day(message, user, card_files)
 
 
+@router.message(F.text.in_({"🃏 Расклад дня", "Карта дня"}))
+async def handle_daily_spread(message: Message, state: FSMContext) -> None:
+    await state.clear()
+    await trigger_daily_spread(message.from_user.id, message)
+
+
 @router.message(F.text == "🗝️ Продвинутые расклады")
 async def handle_advanced_entry(message: Message, state: FSMContext) -> None:
     await state.clear()
-    user = get_user_record(message.from_user.id)
-    spreads_left = user.get("spreads_left", 0)
-    if spreads_left <= 0:
-        await message.answer(
-            "К сожалению, у вас закончились расклады. Вы можете приобрести premium либо получить бесплатный расклад за каждого приглашенного друга.",
-            reply_markup=build_premium_keyboard(),
-        )
-        return
-
-    card_files = load_card_files()
-    if len(card_files) < 3:
-        await message.answer(
-            "Недостаточно карт в базе, добавьте не менее 3 изображений в assets/cards.",
-            reply_markup=build_menu_keyboard(),
-        )
-        return
-
-    await message.answer("Выберите расклад:", reply_markup=build_advanced_spread_keyboard())
+    await message.answer("Выберите направление:", reply_markup=build_advanced_categories_keyboard())
 
 
 @router.message(F.text == "Расклад из 3 карт")
@@ -646,7 +729,7 @@ async def handle_invite_friend(message: Message, bot: Bot) -> None:
     )
 
 
-@router.message(F.text == "🎁 Подарок")
+@router.message(F.text.in_({"🎁 Подарок", "Получить 💎"}))
 async def handle_daily_gift(message: Message, state: FSMContext) -> None:
     await state.clear()
     user = get_user_record(message.from_user.id)
@@ -692,6 +775,63 @@ async def handle_roll_daily_gift(callback: CallbackQuery) -> None:
     await callback.message.answer(
         f"Вы выиграли {reward}💎!\nТеперь у тебя {user['diamonds']}💎",
         reply_markup=build_menu_keyboard(),
+    )
+
+
+def build_leaf_mapping() -> Dict[str, Dict[str, List[str]]]:
+    return {
+        "rel": {"title": "Расклады на отношения", "options": RELATION_SPREADS},
+        "fin": {"title": "Расклады на финансы", "options": FINANCE_SPREADS},
+        "self": {"title": "Расклады про себя", "options": SELF_SPREADS},
+    }
+
+
+@router.callback_query(F.data == "adv_relations")
+async def handle_adv_relations(callback: CallbackQuery) -> None:
+    await callback.answer()
+    await callback.message.answer(
+        "Расклады на отношения",
+        reply_markup=build_leaf_keyboard(RELATION_SPREADS, "rel"),
+    )
+
+
+@router.callback_query(F.data == "adv_finance")
+async def handle_adv_finance(callback: CallbackQuery) -> None:
+    await callback.answer()
+    await callback.message.answer(
+        "Расклады на финансы",
+        reply_markup=build_leaf_keyboard(FINANCE_SPREADS, "fin"),
+    )
+
+
+@router.callback_query(F.data == "adv_self")
+async def handle_adv_self(callback: CallbackQuery) -> None:
+    await callback.answer()
+    await callback.message.answer(
+        "Расклады на день",
+        reply_markup=build_leaf_keyboard(SELF_SPREADS, "self"),
+    )
+
+
+@router.callback_query(lambda c: ":" in c.data and c.data.split(":", 1)[0] in {"rel", "fin", "self"})
+async def handle_leaf_stub(callback: CallbackQuery) -> None:
+    await callback.answer()
+    prefix, idx_str = callback.data.split(":", 1)
+    mapping = build_leaf_mapping()
+    leaf = mapping.get(prefix)
+    if not leaf:
+        return
+    options = leaf["options"]
+    try:
+        idx = int(idx_str)
+    except ValueError:
+        return
+    if idx < 0 or idx >= len(options):
+        return
+    choice = options[idx]
+    await callback.message.answer(
+        f"Заглушка: «{choice}». Скоро добавим интерпретацию.",
+        reply_markup=build_advanced_categories_keyboard(),
     )
 
 
