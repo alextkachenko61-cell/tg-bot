@@ -27,6 +27,13 @@ from aiogram.fsm.storage.memory import MemoryStorage
 from dotenv import load_dotenv
 from PIL import Image
 from openai import AsyncOpenAI
+from prompts import (
+    DEFAULT_SYSTEM_PROMPT,
+    build_card_day_user_prompt,
+    build_clarify_user_prompt,
+    build_three_cards_user_prompt,
+    resolve_system_prompt,
+)
 
 load_dotenv()
 
@@ -37,10 +44,6 @@ LLM_ENABLED = os.getenv("LLM_ENABLED", "1") == "1"
 LLM_MODEL = os.getenv("LLM_MODEL", "gpt-4.1-mini")
 LLM_MAX_TOKENS_DAY = int(os.getenv("LLM_MAX_TOKENS_DAY", "220"))
 LLM_MAX_TOKENS_3 = int(os.getenv("LLM_MAX_TOKENS_3", "420"))
-DEFAULT_SYSTEM_PROMPT = (
-    "Ты помогаешь кратко и нейтрально интерпретировать карты Таро. "
-    "Отвечай на русском языке без мистики и пафоса, лаконично и спокойно."
-)
 LLM_SYSTEM_PROMPT = os.getenv("LLM_SYSTEM_PROMPT", DEFAULT_SYSTEM_PROMPT)
 LLM_SYSTEM_PROMPT_DAY = os.getenv("LLM_SYSTEM_PROMPT_DAY")
 LLM_SYSTEM_PROMPT_3 = os.getenv("LLM_SYSTEM_PROMPT_3")
@@ -370,14 +373,6 @@ def format_profile_text(user: Dict[str, Any]) -> str:
     )
 
 
-def get_system_prompt(mode: str) -> str:
-    if mode == "DAY":
-        return LLM_SYSTEM_PROMPT_DAY or LLM_SYSTEM_PROMPT or DEFAULT_SYSTEM_PROMPT
-    if mode == "THREE":
-        return LLM_SYSTEM_PROMPT_3 or LLM_SYSTEM_PROMPT or DEFAULT_SYSTEM_PROMPT
-    return LLM_SYSTEM_PROMPT or DEFAULT_SYSTEM_PROMPT
-
-
 async def call_llm(messages: List[Dict[str, str]], max_tokens: int, mode: str) -> Optional[str]:
     if not (LLM_ENABLED and openai_client):
         return None
@@ -437,15 +432,11 @@ async def send_rendered_message(
 async def generate_card_day_interpretation(card_name: str) -> str:
     fallback = f"[B]Карта дня:[/B] {card_name}. Интерпретация будет добавлена позже."
     messages = [
-        {"role": "system", "content": get_system_prompt("DAY")},
         {
-            "role": "user",
-            "content": (
-                "Контекст: Карта дня. Название карты: "
-                f"{card_name}. Используй маркеры [B]...[/B] для выделения ключевого вывода. "
-                "Не используй HTML."
-            ),
+            "role": "system",
+            "content": resolve_system_prompt("DAY", LLM_SYSTEM_PROMPT, LLM_SYSTEM_PROMPT_DAY, LLM_SYSTEM_PROMPT_3),
         },
+        {"role": "user", "content": build_card_day_user_prompt(card_name)},
     ]
 
     text = await call_llm(messages=messages, max_tokens=LLM_MAX_TOKENS_DAY, mode="DAY")
@@ -455,17 +446,11 @@ async def generate_card_day_interpretation(card_name: str) -> str:
 async def generate_three_cards_interpretation(question: str, card_names: List[str]) -> str:
     joined_cards = ", ".join(card_names)
     messages = [
-        {"role": "system", "content": get_system_prompt("THREE")},
         {
-            "role": "user",
-            "content": (
-                f"Вопрос пользователя: {question}\n"
-                f"Карты: {joined_cards}."
-                " Опиши значение каждой карты и общий итог."
-                " Используй маркеры [B]...[/B] для выделения ключевых выводов. "
-                "Не используй HTML."
-            ),
+            "role": "system",
+            "content": resolve_system_prompt("THREE", LLM_SYSTEM_PROMPT, LLM_SYSTEM_PROMPT_DAY, LLM_SYSTEM_PROMPT_3),
         },
+        {"role": "user", "content": build_three_cards_user_prompt(question, joined_cards)},
     ]
 
     fallback = "[B]Интерпретация недоступна.[/B] Позже добавим подробности по раскладу."
@@ -475,16 +460,11 @@ async def generate_three_cards_interpretation(question: str, card_names: List[st
 
 async def generate_clarify_interpretation(card_name: str, question: str) -> str:
     messages = [
-        {"role": "system", "content": get_system_prompt("DAY")},
         {
-            "role": "user",
-            "content": (
-                "Контекст: уточняющий вопрос по карте дня.\n"
-                f"Карта: {card_name}.\n"
-                f"Вопрос: {question}.\n"
-                "Используй маркеры [B]...[/B] для выделения ключевых выводов. Не используй HTML."
-            ),
+            "role": "system",
+            "content": resolve_system_prompt("DAY", LLM_SYSTEM_PROMPT, LLM_SYSTEM_PROMPT_DAY, LLM_SYSTEM_PROMPT_3),
         },
+        {"role": "user", "content": build_clarify_user_prompt(card_name, question)},
     ]
     fallback = "[B]Уточнение временно недоступно.[/B] Попробуйте позже."
     text = await call_llm(messages=messages, max_tokens=LLM_MAX_TOKENS_DAY, mode="DAY")
