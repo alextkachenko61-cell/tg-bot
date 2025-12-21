@@ -27,13 +27,7 @@ from aiogram.fsm.storage.memory import MemoryStorage
 from dotenv import load_dotenv
 from PIL import Image
 from openai import AsyncOpenAI
-from prompts import (
-    DEFAULT_SYSTEM_PROMPT,
-    build_card_day_user_prompt,
-    build_clarify_user_prompt,
-    build_three_cards_user_prompt,
-    resolve_system_prompt,
-)
+from prompts import DEFAULT_SYSTEM_PROMPT, build_prompt_messages
 
 load_dotenv()
 
@@ -431,13 +425,13 @@ async def send_rendered_message(
 
 async def generate_card_day_interpretation(card_name: str) -> str:
     fallback = f"[B]Карта дня:[/B] {card_name}. Интерпретация будет добавлена позже."
-    messages = [
-        {
-            "role": "system",
-            "content": resolve_system_prompt("DAY", LLM_SYSTEM_PROMPT, LLM_SYSTEM_PROMPT_DAY, LLM_SYSTEM_PROMPT_3),
-        },
-        {"role": "user", "content": build_card_day_user_prompt(card_name)},
-    ]
+    messages = build_prompt_messages(
+        "card_day",
+        base_prompt=LLM_SYSTEM_PROMPT,
+        day_prompt=LLM_SYSTEM_PROMPT_DAY,
+        three_prompt=LLM_SYSTEM_PROMPT_3,
+        card_name=card_name,
+    )
 
     text = await call_llm(messages=messages, max_tokens=LLM_MAX_TOKENS_DAY, mode="DAY")
     return text or fallback
@@ -445,13 +439,14 @@ async def generate_card_day_interpretation(card_name: str) -> str:
 
 async def generate_three_cards_interpretation(question: str, card_names: List[str]) -> str:
     joined_cards = ", ".join(card_names)
-    messages = [
-        {
-            "role": "system",
-            "content": resolve_system_prompt("THREE", LLM_SYSTEM_PROMPT, LLM_SYSTEM_PROMPT_DAY, LLM_SYSTEM_PROMPT_3),
-        },
-        {"role": "user", "content": build_three_cards_user_prompt(question, joined_cards)},
-    ]
+    messages = build_prompt_messages(
+        "three_cards",
+        base_prompt=LLM_SYSTEM_PROMPT,
+        day_prompt=LLM_SYSTEM_PROMPT_DAY,
+        three_prompt=LLM_SYSTEM_PROMPT_3,
+        question=question,
+        cards=joined_cards,
+    )
 
     fallback = "[B]Интерпретация недоступна.[/B] Позже добавим подробности по раскладу."
     text = await call_llm(messages=messages, max_tokens=LLM_MAX_TOKENS_3, mode="THREE")
@@ -459,13 +454,14 @@ async def generate_three_cards_interpretation(question: str, card_names: List[st
 
 
 async def generate_clarify_interpretation(card_name: str, question: str) -> str:
-    messages = [
-        {
-            "role": "system",
-            "content": resolve_system_prompt("DAY", LLM_SYSTEM_PROMPT, LLM_SYSTEM_PROMPT_DAY, LLM_SYSTEM_PROMPT_3),
-        },
-        {"role": "user", "content": build_clarify_user_prompt(card_name, question)},
-    ]
+    messages = build_prompt_messages(
+        "clarify",
+        base_prompt=LLM_SYSTEM_PROMPT,
+        day_prompt=LLM_SYSTEM_PROMPT_DAY,
+        three_prompt=LLM_SYSTEM_PROMPT_3,
+        card_name=card_name,
+        question=question,
+    )
     fallback = "[B]Уточнение временно недоступно.[/B] Попробуйте позже."
     text = await call_llm(messages=messages, max_tokens=LLM_MAX_TOKENS_DAY, mode="DAY")
     return text or fallback
