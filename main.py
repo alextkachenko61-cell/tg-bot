@@ -18,6 +18,7 @@ from aiogram.types import (
     CallbackQuery,
     FSInputFile,
     InlineKeyboardMarkup,
+    KeyboardButton,
     Message,
     ReplyKeyboardMarkup,
 )
@@ -190,14 +191,14 @@ def build_start_journey_keyboard() -> InlineKeyboardMarkup:
 def build_menu_keyboard() -> ReplyKeyboardMarkup:
     builder = ReplyKeyboardBuilder()
     builder.row(
-        builder.button(text="✨ Получить расклад"),
-        builder.button(text="🚀 Премиум"),
+        KeyboardButton(text="✨ Получить расклад"),
+        KeyboardButton(text="🚀 Премиум"),
     )
     builder.row(
-        builder.button(text="👤 Профиль"),
-        builder.button(text="🔥 Бесплатные расклады"),
+        KeyboardButton(text="👤 Профиль"),
+        KeyboardButton(text="🔥 Бесплатные расклады"),
     )
-    builder.row(builder.button(text="🏛 Испытай судьбу"))
+    builder.row(KeyboardButton(text="🏛 Испытай судьбу"))
     return builder.as_markup(resize_keyboard=True)
 
 
