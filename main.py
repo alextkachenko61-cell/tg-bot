@@ -46,14 +46,16 @@ LLM_TOP_P = float(os.getenv("LLM_TOP_P", "1.0"))
 LLM_FREQUENCY_PENALTY = float(os.getenv("LLM_FREQUENCY_PENALTY", "0.2"))
 LLM_PRESENCE_PENALTY = float(os.getenv("LLM_PRESENCE_PENALTY", "0.0"))
 LLM_SEED = os.getenv("LLM_SEED")
-DAILY_SPREAD_COOLDOWN = timedelta(hours=24)
 DAILY_GIFT_COOLDOWN = timedelta(hours=24)
 CLARIFY_COST = 10
 DATA_FILE = Path("data/users.json")
 CARDS_DIR = Path("assets/cards")
 CARD_EXTENSIONS = {".png", ".jpg", ".jpeg"}
+THREE_CARD_SPREAD_COST = 5
+DAILY_SPREAD_COST = 5
+INVITE_DIAMOND_REWARD = 10
+SUBSCRIPTION_DIAMOND_REWARD = 10
 DEFAULT_USER = {
-    "spreads_left": 0,
     "free_granted": False,
     "invited_count": 0,
     "referred_by": None,
@@ -65,24 +67,24 @@ DEFAULT_USER = {
     "last_daily_card": None,
 }
 RELATION_OPTIONS: List[Tuple[str, str]] = [
-    ("Есть ли у него другая?", "REL_HAS_OTHER"),
-    ("Изменял ли он мне?", "REL_IS_CHEATING"),
-    ("Любит ли он меня на самом деле?", "REL_TRUE_LOVE"),
-    ("Считает ли он меня «своей женщиной»?", "REL_OWN_WOMAN"),
-    ("Уйдёт ли он от меня?", "REL_LEAVE_ME"),
+    (f"Есть ли у него другая? {THREE_CARD_SPREAD_COST}💎", "REL_HAS_OTHER"),
+    (f"Изменял ли он мне? {THREE_CARD_SPREAD_COST}💎", "REL_IS_CHEATING"),
+    (f"Любит ли он меня на самом деле? {THREE_CARD_SPREAD_COST}💎", "REL_TRUE_LOVE"),
+    (f"Считает ли он меня «своей женщиной»? {THREE_CARD_SPREAD_COST}💎", "REL_OWN_WOMAN"),
+    (f"Уйдёт ли он от меня? {THREE_CARD_SPREAD_COST}💎", "REL_LEAVE_ME"),
 ]
 FINANCE_OPTIONS: List[Tuple[str, str]] = [
-    ("Будут ли у меня деньги в ближайшее время?", "FIN_SOON_MONEY"),
-    ("Почему деньги не задерживаются?", "FIN_NO_STICK"),
-    ("Тратить на себя или экономить?", "FIN_SPEND_OR_SAVE"),
-    ("Найду ли я того кто меня обеспечит?", "FIN_FIND_SPONSOR"),
+    (f"Будут ли у меня деньги в ближайшее время? {THREE_CARD_SPREAD_COST}💎", "FIN_SOON_MONEY"),
+    (f"Почему деньги не задерживаются? {THREE_CARD_SPREAD_COST}💎", "FIN_NO_STICK"),
+    (f"Тратить на себя или экономить? {THREE_CARD_SPREAD_COST}💎", "FIN_SPEND_OR_SAVE"),
+    (f"Найду ли я того кто меня обеспечит? {THREE_CARD_SPREAD_COST}💎", "FIN_FIND_SPONSOR"),
 ]
 SELF_OPTIONS: List[Tuple[str, str]] = [
-    ("Где ты врёшь себе", "SELF_LIE"),
-    ("Что тебя реально сдерживает", "SELF_BLOCKS"),
-    ("Чего ты на самом деле хочешь", "SELF_WANT"),
-    ("В чём твой внутренний конфликт", "SELF_CONFLICT"),
-    ("Какую роль ты сейчас играешь", "SELF_ROLE"),
+    (f"Где ты врёшь себе {THREE_CARD_SPREAD_COST}💎", "SELF_LIE"),
+    (f"Что тебя реально сдерживает {THREE_CARD_SPREAD_COST}💎", "SELF_BLOCKS"),
+    (f"Чего ты на самом деле хочешь {THREE_CARD_SPREAD_COST}💎", "SELF_WANT"),
+    (f"В чём твой внутренний конфликт {THREE_CARD_SPREAD_COST}💎", "SELF_CONFLICT"),
+    (f"Какую роль ты сейчас играешь {THREE_CARD_SPREAD_COST}💎", "SELF_ROLE"),
 ]
 RELATION_SPREADS = [
     "Есть ли у него другая?",
@@ -229,8 +231,8 @@ def build_gift_inline_keyboard() -> InlineKeyboardMarkup:
 
 def build_spread_inline_keyboard() -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
-    builder.button(text="🃏 Расклад дня", callback_data="spread_daily")
-    builder.button(text="🗝️ Продвинутые расклады", callback_data="spread_advanced")
+    builder.button(text=f"🃏 Расклад дня {DAILY_SPREAD_COST}💎", callback_data="spread_daily")
+    builder.button(text=f"🗝️ Продвинутые расклады {THREE_CARD_SPREAD_COST}💎", callback_data="spread_advanced")
     builder.adjust(1)
     return builder.as_markup()
 
@@ -381,8 +383,6 @@ def format_profile_text(user: Dict[str, Any]) -> str:
     reg_str = reg_dt.strftime("%Y-%m-%d %H:%M UTC") if reg_dt else "неизвестно"
     diamonds = user.get("diamonds", 0)
     invited = user.get("invited_count", 0)
-    daily_count = user.get("daily_spread_count", 0)
-    spreads_left = user.get("spreads_left", 0)
     last_daily_card = user.get("last_daily_card")
     daily_card_text = last_daily_card or "ещё не было"
     return (
@@ -390,8 +390,6 @@ def format_profile_text(user: Dict[str, Any]) -> str:
         f"Дата регистрации: {reg_str}\n"
         f"Алмазики: {diamonds}💎\n"
         f"Приглашённых друзей: {invited}\n"
-        f"Получено раскладов дня: {daily_count}\n"
-        f"Доступно раскладов: {spreads_left}\n"
         f"Последняя карта дня: {daily_card_text}"
     )
 
@@ -502,11 +500,11 @@ async def generate_clarify_interpretation(card_name: str, question: str) -> str:
 
 async def process_prompt_spread(message: Message, prompt_key: str, question: str = "") -> bool:
     user = get_user_record(message.from_user.id)
-    spreads_left = user.get("spreads_left", 0)
-    if spreads_left <= 0:
+    diamonds = user.get("diamonds", 0)
+    if diamonds < THREE_CARD_SPREAD_COST:
         await message.answer(
-            "К сожалению, у вас закончились расклады. Вы можете приобрести premium либо получить бесплатный расклад за каждого приглашенного друга.",
-            reply_markup=build_premium_keyboard(),
+            f"Недостаточно алмазиков: {diamonds}💎. Нужно {THREE_CARD_SPREAD_COST}💎.",
+            reply_markup=build_diamonds_keyboard(),
         )
         return False
 
@@ -528,7 +526,7 @@ async def process_prompt_spread(message: Message, prompt_key: str, question: str
     interpretation = await generate_prompt_interpretation(prompt_key, question=question, card_names=card_names)
     await send_rendered_message(message, interpretation, reply_markup=build_menu_keyboard())
 
-    user["spreads_left"] = max(spreads_left - 1, 0)
+    user["diamonds"] = max(0, diamonds - THREE_CARD_SPREAD_COST)
     save_user_record(message.from_user.id, user)
     return True
 
@@ -547,14 +545,15 @@ async def handle_start(message: Message, bot: Bot) -> None:
         if referral_payload and referral_payload != user_id:
             inviter_key = str(referral_payload)
             inviter_record = ensure_user_defaults(users.get(inviter_key, {}))
-            inviter_record["spreads_left"] += 1
+            inviter_record["diamonds"] = inviter_record.get("diamonds", 0) + INVITE_DIAMOND_REWARD
             inviter_record["invited_count"] += 1
             users[inviter_key] = inviter_record
             new_user_record["referred_by"] = referral_payload
             try:
                 await bot.send_message(
                     referral_payload,
-                    f"Вам начислен бесплатный расклад за приглашенного друга. Доступно: {inviter_record['spreads_left']}",
+                    f"Вам начислено {INVITE_DIAMOND_REWARD}💎 за приглашенного друга. "
+                    f"Доступно {inviter_record['diamonds']}💎",
                 )
             except Exception as exc:  # noqa: BLE001
                 logging.info("Не удалось отправить уведомление приглашавшему %s: %s", referral_payload, exc)
@@ -587,14 +586,11 @@ async def handle_check_subscription(callback: CallbackQuery, bot: Bot) -> None:
         return
 
     user = get_user_record(callback.from_user.id)
-    spreads_left = user.get("spreads_left", 0)
     free_granted = user.get("free_granted", False)
 
     if not free_granted:
-        spreads_left += 1
-        free_granted = True
-        user["spreads_left"] = spreads_left
-        user["free_granted"] = free_granted
+        user["diamonds"] = user.get("diamonds", 0) + SUBSCRIPTION_DIAMOND_REWARD
+        user["free_granted"] = True
         save_user_record(callback.from_user.id, user)
 
     await callback.message.answer(
@@ -609,13 +605,11 @@ async def handle_check_subscription(callback: CallbackQuery, bot: Bot) -> None:
 async def handle_menu(message: Message, state: FSMContext) -> None:
     await state.clear()
     user = get_user_record(message.from_user.id)
-    spreads_left = user.get("spreads_left", 0)
     diamonds = user.get("diamonds", 0)
-    on_cooldown, remaining = is_on_cooldown(user.get("last_daily_spread_at"), DAILY_SPREAD_COOLDOWN)
-    daily_status = f"через {format_remaining(remaining)}" if on_cooldown else "доступен"
 
     await message.answer(
-        f"Доступно раскладов: {spreads_left}\nАлмазики: {diamonds}💎\nКарта дня: {daily_status}",
+        f"Алмазики: {diamonds}💎\n"
+        f"Расклад дня стоит {DAILY_SPREAD_COST}💎, расклады из 3 карт — {THREE_CARD_SPREAD_COST}💎.",
         reply_markup=build_menu_keyboard(),
     )
 
@@ -644,7 +638,7 @@ async def handle_start_journey(callback: CallbackQuery) -> None:
 async def handle_spread_menu_callback(callback: CallbackQuery) -> None:
     await callback.answer()
     await callback.message.answer(
-        "Тут ты можешь получить расклад.",
+        f"Тут ты можешь получить расклад. Стоимость: карта дня — {DAILY_SPREAD_COST}💎, расклады из 3 карт — {THREE_CARD_SPREAD_COST}💎.",
         reply_markup=build_spread_inline_keyboard(),
     )
 
@@ -653,7 +647,7 @@ async def handle_spread_menu_callback(callback: CallbackQuery) -> None:
 async def handle_get_spread(message: Message, state: FSMContext) -> None:
     await state.clear()
     await message.answer(
-        "Тут ты можешь получить расклад.",
+        f"Тут ты можешь получить расклад. Стоимость: карта дня — {DAILY_SPREAD_COST}💎, расклады из 3 карт — {THREE_CARD_SPREAD_COST}💎.",
         reply_markup=build_spread_inline_keyboard(),
     )
 
@@ -667,7 +661,10 @@ async def handle_spread_daily_inline(callback: CallbackQuery) -> None:
 @router.callback_query(F.data == "spread_advanced")
 async def handle_spread_advanced_inline(callback: CallbackQuery) -> None:
     await callback.answer()
-    await callback.message.answer("Выберите направление:", reply_markup=build_advanced_categories_keyboard())
+    await callback.message.answer(
+        f"Выберите направление (стоимость {THREE_CARD_SPREAD_COST}💎):",
+        reply_markup=build_advanced_categories_keyboard(),
+    )
 
 
 @router.callback_query(F.data == "spread_back")
@@ -691,7 +688,9 @@ async def handle_get_diamonds(message: Message, state: FSMContext) -> None:
     )
 
 
-async def process_card_of_day(message: Message, user: Dict[str, Any], card_files: List[Path]) -> None:
+async def process_card_of_day(
+    message: Message, user: Dict[str, Any], card_files: List[Path], *, cost: int
+) -> None:
     card_path = random.choice(card_files)
     await message.answer_photo(FSInputFile(card_path))
     interpretation = await generate_card_day_interpretation(card_path.stem)
@@ -699,6 +698,7 @@ async def process_card_of_day(message: Message, user: Dict[str, Any], card_files
     user["last_daily_spread_at"] = now_utc().isoformat()
     user["daily_spread_count"] = user.get("daily_spread_count", 0) + 1
     user["last_daily_card"] = card_path.stem
+    user["diamonds"] = max(0, user.get("diamonds", 0) - cost)
     save_user_record(message.from_user.id, user)
 
 
@@ -712,15 +712,15 @@ async def trigger_daily_spread(user_id: int, message: Message) -> None:
         )
         return
 
-    on_cooldown, remaining = is_on_cooldown(user.get("last_daily_spread_at"), DAILY_SPREAD_COOLDOWN)
-    if on_cooldown:
+    diamonds = user.get("diamonds", 0)
+    if diamonds < DAILY_SPREAD_COST:
         await message.answer(
-            f"Расклад дня будет доступен через {format_remaining(remaining)}.",
-            reply_markup=build_menu_keyboard(),
+            f"Недостаточно алмазиков: {diamonds}💎. Нужно {DAILY_SPREAD_COST}💎 для карты дня.",
+            reply_markup=build_diamonds_keyboard(),
         )
         return
 
-    await process_card_of_day(message, user, card_files)
+    await process_card_of_day(message, user, card_files, cost=DAILY_SPREAD_COST)
 
 
 @router.message(F.text.in_({"🃏 Расклад дня", "Карта дня"}))
@@ -732,19 +732,21 @@ async def handle_daily_spread(message: Message, state: FSMContext) -> None:
 @router.message(F.text == "🗝️ Продвинутые расклады")
 async def handle_advanced_entry(message: Message, state: FSMContext) -> None:
     await state.clear()
-    await message.answer("Выберите направление:", reply_markup=build_advanced_categories_keyboard())
+    await message.answer(
+        f"Выберите направление (стоимость {THREE_CARD_SPREAD_COST}💎):",
+        reply_markup=build_advanced_categories_keyboard(),
+    )
 
 
 @router.message(F.text == "Расклад из 3 карт")
 async def handle_advanced_spread_choice(message: Message, state: FSMContext) -> None:
     await state.clear()
     user = get_user_record(message.from_user.id)
-    spreads_left = user.get("spreads_left", 0)
-
-    if spreads_left <= 0:
+    diamonds = user.get("diamonds", 0)
+    if diamonds < THREE_CARD_SPREAD_COST:
         await message.answer(
-            "К сожалению, у вас закончились расклады. Вы можете приобрести premium либо получить бесплатный расклад за каждого приглашенного друга.",
-            reply_markup=build_premium_keyboard(),
+            f"Недостаточно алмазиков: {diamonds}💎. Нужно {THREE_CARD_SPREAD_COST}💎 для расклада из 3 карт.",
+            reply_markup=build_diamonds_keyboard(),
         )
         return
 
