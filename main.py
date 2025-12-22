@@ -6,7 +6,7 @@ import random
 from datetime import datetime, timedelta, timezone
 from io import BytesIO
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 from aiogram import Bot, Dispatcher, Router, F
 from aiogram.client.default import DefaultBotProperties
@@ -27,7 +27,7 @@ from aiogram.fsm.storage.memory import MemoryStorage
 from dotenv import load_dotenv
 from PIL import Image
 from openai import AsyncOpenAI
-from prompts import DEFAULT_SYSTEM_PROMPT, build_prompt_messages
+from prompts import DEFAULT_SYSTEM_PROMPT, PROMPT_REGISTRY, build_prompt_messages
 
 load_dotenv()
 
@@ -64,6 +64,26 @@ DEFAULT_USER = {
     "daily_spread_count": 0,
     "last_daily_card": None,
 }
+RELATION_OPTIONS: List[Tuple[str, str]] = [
+    ("Есть ли у него другая?", "REL_HAS_OTHER"),
+    ("Изменял ли он мне?", "REL_IS_CHEATING"),
+    ("Любит ли он меня на самом деле?", "REL_TRUE_LOVE"),
+    ("Считает ли он меня «своей женщиной»?", "REL_OWN_WOMAN"),
+    ("Уйдёт ли он от меня?", "REL_LEAVE_ME"),
+]
+FINANCE_OPTIONS: List[Tuple[str, str]] = [
+    ("Будут ли у меня деньги в ближайшее время?", "FIN_SOON_MONEY"),
+    ("Почему деньги не задерживаются?", "FIN_NO_STICK"),
+    ("Тратить на себя или экономить?", "FIN_SPEND_OR_SAVE"),
+    ("Найду ли я того кто меня обеспечит?", "FIN_FIND_SPONSOR"),
+]
+SELF_OPTIONS: List[Tuple[str, str]] = [
+    ("Где ты врёшь себе", "SELF_LIE"),
+    ("Что тебя реально сдерживает", "SELF_BLOCKS"),
+    ("Чего ты на самом деле хочешь", "SELF_WANT"),
+    ("В чём твой внутренний конфликт", "SELF_CONFLICT"),
+    ("Какую роль ты сейчас играешь", "SELF_ROLE"),
+]
 RELATION_SPREADS = [
     "Есть ли у него другая?",
     "Изменял ли он мне?",
@@ -226,10 +246,10 @@ def build_advanced_categories_keyboard() -> InlineKeyboardMarkup:
     return builder.as_markup()
 
 
-def build_leaf_keyboard(options: List[str], prefix: str) -> InlineKeyboardMarkup:
+def build_leaf_keyboard(options: List[Tuple[str, str]]) -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
-    for idx, option in enumerate(options):
-        builder.button(text=option, callback_data=f"{prefix}:{idx}")
+    for text, key in options:
+        builder.button(text=text, callback_data=f"leaf:{key}")
     builder.button(text="⬅️ Назад", callback_data="spread_advanced")
     builder.adjust(1)
     return builder.as_markup()
@@ -450,6 +470,24 @@ async def generate_three_cards_interpretation(question: str, card_names: List[st
 
     fallback = "[B]Интерпретация недоступна.[/B] Позже добавим подробности по раскладу."
     text = await call_llm(messages=messages, max_tokens=LLM_MAX_TOKENS_3, mode="THREE")
+    return text or fallback
+
+
+async def generate_prompt_interpretation(prompt_key: str, question: str, card_names: List[str]) -> str:
+    joined_cards = ", ".join(card_names)
+    config = PROMPT_REGISTRY.get(prompt_key)
+    mode = config.mode if config else "THREE"
+    messages = build_prompt_messages(
+        prompt_key,
+        base_prompt=LLM_SYSTEM_PROMPT,
+        day_prompt=LLM_SYSTEM_PROMPT_DAY,
+        three_prompt=LLM_SYSTEM_PROMPT_3,
+        question=question,
+        cards=joined_cards,
+    )
+    fallback = "[B]Интерпретация недоступна.[/B] Позже добавим подробности по раскладу."
+    max_tokens = LLM_MAX_TOKENS_DAY if mode == "DAY" else LLM_MAX_TOKENS_3
+    text = await call_llm(messages=messages, max_tokens=max_tokens, mode=mode)
     return text or fallback
 
 
@@ -754,20 +792,12 @@ async def handle_roll_daily_gift(callback: CallbackQuery) -> None:
     )
 
 
-def build_leaf_mapping() -> Dict[str, Dict[str, List[str]]]:
-    return {
-        "rel": {"title": "Расклады на отношения", "options": RELATION_SPREADS},
-        "fin": {"title": "Расклады на финансы", "options": FINANCE_SPREADS},
-        "self": {"title": "Расклады про себя", "options": SELF_SPREADS},
-    }
-
-
 @router.callback_query(F.data == "adv_relations")
 async def handle_adv_relations(callback: CallbackQuery) -> None:
     await callback.answer()
     await callback.message.answer(
         "Расклады на отношения",
-        reply_markup=build_leaf_keyboard(RELATION_SPREADS, "rel"),
+        reply_markup=build_leaf_keyboard(RELATION_OPTIONS),
     )
 
 
@@ -776,7 +806,7 @@ async def handle_adv_finance(callback: CallbackQuery) -> None:
     await callback.answer()
     await callback.message.answer(
         "Расклады на финансы",
-        reply_markup=build_leaf_keyboard(FINANCE_SPREADS, "fin"),
+        reply_markup=build_leaf_keyboard(FINANCE_OPTIONS),
     )
 
 
@@ -785,29 +815,36 @@ async def handle_adv_self(callback: CallbackQuery) -> None:
     await callback.answer()
     await callback.message.answer(
         "Расклады на день",
-        reply_markup=build_leaf_keyboard(SELF_SPREADS, "self"),
+        reply_markup=build_leaf_keyboard(SELF_OPTIONS),
     )
 
 
-@router.callback_query(lambda c: ":" in c.data and c.data.split(":", 1)[0] in {"rel", "fin", "self"})
-async def handle_leaf_stub(callback: CallbackQuery) -> None:
+@router.callback_query(F.data.startswith("leaf:"))
+async def handle_leaf_selection(callback: CallbackQuery, state: FSMContext) -> None:
     await callback.answer()
-    prefix, idx_str = callback.data.split(":", 1)
-    mapping = build_leaf_mapping()
-    leaf = mapping.get(prefix)
-    if not leaf:
+    prompt_key = callback.data.split(":", 1)[1]
+    user = get_user_record(callback.from_user.id)
+    spreads_left = user.get("spreads_left", 0)
+    if spreads_left <= 0:
+        await callback.message.answer(
+            "К сожалению, у вас закончились расклады. Вы можете приобрести premium либо получить бесплатный расклад за каждого приглашенного друга.",
+            reply_markup=build_premium_keyboard(),
+        )
         return
-    options = leaf["options"]
-    try:
-        idx = int(idx_str)
-    except ValueError:
+
+    card_files = load_card_files()
+    if len(card_files) < 3:
+        await callback.message.answer(
+            "Недостаточно карт в базе, добавьте не менее 3 изображений в assets/cards.",
+            reply_markup=build_menu_keyboard(),
+        )
         return
-    if idx < 0 or idx >= len(options):
-        return
-    choice = options[idx]
+
+    await state.set_state(SpreadStates.waiting_for_question)
+    await state.update_data(prompt_key=prompt_key)
     await callback.message.answer(
-        f"Заглушка: «{choice}». Скоро добавим интерпретацию.",
-        reply_markup=build_advanced_categories_keyboard(),
+        "Напишите ваш вопрос одним сообщением.",
+        reply_markup=build_cancel_keyboard(),
     )
 
 
