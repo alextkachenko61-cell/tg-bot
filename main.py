@@ -190,7 +190,7 @@ def build_start_journey_keyboard() -> InlineKeyboardMarkup:
 
 def build_menu_keyboard() -> ReplyKeyboardMarkup:
     builder = ReplyKeyboardBuilder()
-    builder.button(text="✨ Получить расклад")
+    builder.button(text="✨ Получить расклад ✨")
     builder.button(text="🚀 Премиум")
     builder.button(text="👤 Профиль")
     builder.button(text="🔥 Бесплатные расклады")
