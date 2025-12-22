@@ -448,7 +448,8 @@ class SubscriptionMiddleware(BaseMiddleware):
 
     @staticmethod
     def _filter_kwargs(handler: Any, data: Dict[str, Any]) -> Dict[str, Any]:
-        signature = inspect.signature(handler)
+        target = getattr(handler, "callback", handler)
+        signature = inspect.signature(target)
         has_var_kwargs = any(param.kind == inspect.Parameter.VAR_KEYWORD for param in signature.parameters.values())
         if has_var_kwargs:
             return data
