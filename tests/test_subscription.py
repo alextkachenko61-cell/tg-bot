@@ -85,10 +85,16 @@ def test_middleware_blocks_protected_handler_for_unsubscribed_text():
         called.append(True)
         return data
 
+    class WrappedHandler:
+        def __init__(self, cb):
+            self.callback = cb
+
+        async def __call__(self, event, data):
+            return await self.callback(event, data)
+
     message = DummyMessage(user_id=5)
-    result = asyncio.run(
-        middleware(protected_handler, message, {"bot": bot, "dispatcher": object(), "bots": "extra"})
-    )
+    wrapped = WrappedHandler(protected_handler)
+    result = asyncio.run(middleware(wrapped, message, {"bot": bot, "dispatcher": object(), "bots": "extra"}))
 
     assert result is None
     assert not called
