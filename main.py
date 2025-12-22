@@ -7,8 +7,9 @@ from datetime import datetime, timedelta, timezone
 from io import BytesIO
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
+import inspect
 
-from aiogram import Bot, Dispatcher, Router, F
+from aiogram import BaseMiddleware, Bot, Dispatcher, Router, F
 from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ChatMemberStatus, ParseMode
 from aiogram.filters import CommandStart
@@ -55,6 +56,7 @@ THREE_CARD_SPREAD_COST = 5
 DAILY_SPREAD_COST = 5
 INVITE_DIAMOND_REWARD = 10
 SUBSCRIPTION_DIAMOND_REWARD = 10
+SUBSCRIPTION_REQUIRED_FLAG = "requires_subscription"
 DEFAULT_USER = {
     "free_granted": False,
     "invited_count": 0,
@@ -65,6 +67,8 @@ DEFAULT_USER = {
     "last_daily_gift_at": None,
     "daily_spread_count": 0,
     "last_daily_card": None,
+    "subscription_status": None,
+    "subscription_checked_at": None,
 }
 RELATION_OPTIONS: List[Tuple[str, str]] = [
     (f"Есть ли у него другая? {THREE_CARD_SPREAD_COST}💎", "REL_HAS_OTHER"),
@@ -151,6 +155,11 @@ def ensure_user_defaults(user: Dict[str, Any]) -> Dict[str, Any]:
     if not updated.get("registration_date"):
         updated["registration_date"] = datetime.now(timezone.utc).isoformat()
     return updated
+
+
+def subscription_required(handler: Any) -> Any:
+    setattr(handler, SUBSCRIPTION_REQUIRED_FLAG, True)
+    return handler
 
 
 def save_user_record(user_id: int, user: Dict[str, Any]) -> None:
@@ -379,6 +388,100 @@ def evaluate_slot_reward(value: int) -> tuple[int, str]:
     return 5, "❌ Не совпало — Жабка даёт 5 кристалликов"
 
 
+async def ensure_subscribed(bot: Bot, user_id: int, message_or_callback: Message | CallbackQuery) -> bool:
+    try:
+        member = await bot.get_chat_member(CHANNEL_USERNAME, user_id)
+        status = member.status
+    except Exception as exc:  # noqa: BLE001
+        logging.warning("Не удалось проверить подписку: %s", exc)
+        status = None
+
+    if status is not None:
+        user = get_user_record(user_id)
+        user["subscription_status"] = status
+        user["subscription_checked_at"] = now_utc().isoformat()
+        if status not in {ChatMemberStatus.LEFT, ChatMemberStatus.KICKED} and not user.get("free_granted"):
+            user["diamonds"] = user.get("diamonds", 0) + SUBSCRIPTION_DIAMOND_REWARD
+            user["free_granted"] = True
+        save_user_record(user_id, user)
+
+    is_callback = isinstance(message_or_callback, CallbackQuery) or hasattr(message_or_callback, "message")
+
+    if status is None:
+        text = "Не удалось проверить подписку. Попробуйте ещё раз."
+        if is_callback:
+            await message_or_callback.answer(text)
+            message_object = getattr(message_or_callback, "message", None)
+            if message_object:
+                await message_or_callback.message.answer(
+                    "Для использования бота подпишитесь на канал",
+                    reply_markup=build_subscription_keyboard(),
+                )
+        else:
+            await message_or_callback.answer(text, reply_markup=build_subscription_keyboard())
+        return False
+
+    if status in {ChatMemberStatus.LEFT, ChatMemberStatus.KICKED}:
+        text = "Для использования бота подпишитесь на канал"
+        keyboard = build_subscription_keyboard()
+        if is_callback:
+            await message_or_callback.answer("Подпишитесь на канал, чтобы продолжить.")
+            message_object = getattr(message_or_callback, "message", None)
+            if message_object:
+                await message_object.answer(text, reply_markup=keyboard)
+        else:
+            await message_or_callback.answer(text, reply_markup=keyboard)
+        return False
+
+    if is_callback:
+        try:
+            await message_or_callback.answer()
+        except Exception as exc:  # noqa: BLE001
+            logging.info("Не удалось отправить ответ на callback: %s", exc)
+    return True
+
+
+class SubscriptionMiddleware(BaseMiddleware):
+    def __init__(self, exempt_handlers: Optional[set[str]] = None) -> None:
+        self.exempt_handlers = exempt_handlers or set()
+        super().__init__()
+
+    @staticmethod
+    def _filter_kwargs(handler: Any, data: Dict[str, Any]) -> Dict[str, Any]:
+        signature = inspect.signature(handler)
+        has_var_kwargs = any(param.kind == inspect.Parameter.VAR_KEYWORD for param in signature.parameters.values())
+        if has_var_kwargs:
+            return data
+
+        allowed_keys = {
+            name
+            for name, param in signature.parameters.items()
+            if param.kind in {inspect.Parameter.POSITIONAL_OR_KEYWORD, inspect.Parameter.KEYWORD_ONLY}
+        }
+        return {key: value for key, value in data.items() if key in allowed_keys}
+
+    async def __call__(self, handler: Any, event: Any, data: Dict[str, Any]) -> Any:
+        clean_data = dict(data)
+        clean_data.pop("dispatcher", None)
+        handler_name = getattr(handler, "__name__", "")
+        is_protected = getattr(handler, SUBSCRIPTION_REQUIRED_FLAG, False)
+        filtered_kwargs = self._filter_kwargs(handler, clean_data)
+        if handler_name in self.exempt_handlers or not is_protected:
+            return await handler(event, **filtered_kwargs)
+
+        user = getattr(event, "from_user", None)
+        bot = clean_data.get("bot")
+        if not bot or not user:
+            return await handler(event, **filtered_kwargs)
+
+        is_subscribed = await ensure_subscribed(bot, user.id, event)
+        if not is_subscribed:
+            return None
+
+        filtered_kwargs = self._filter_kwargs(handler, clean_data)
+        return await handler(event, **filtered_kwargs)
+
+
 def format_profile_text(user: Dict[str, Any]) -> str:
     reg_dt = iso_to_datetime(user.get("registration_date"))
     reg_str = reg_dt.strftime("%Y-%m-%d %H:%M UTC") if reg_dt else "неизвестно"
@@ -567,32 +670,23 @@ async def handle_start(message: Message, bot: Bot) -> None:
             users[user_key] = current_user
             save_users(users)
 
+    subscribed = await ensure_subscribed(bot, user_id, message)
+    if not subscribed:
+        return
+
     await message.answer(
-        "Для использования бота подпишитесь на канал",
-        reply_markup=build_subscription_keyboard(),
+        "Привет, меня зовут Таро Жабка 🐸\n"
+        "Если тебе что-то не даёт покоя — давай сделаем расклад и посмотрим, в чём дело.\n"
+        "Со мной ты можешь разобрать любую тему и получить ясный ответ.",
+        reply_markup=build_start_journey_keyboard(),
     )
 
 
 @router.callback_query(lambda c: c.data == "check_subscription")
 async def handle_check_subscription(callback: CallbackQuery, bot: Bot) -> None:
-    await callback.answer()
-    member = await bot.get_chat_member(CHANNEL_USERNAME, callback.from_user.id)
-    status = member.status
-
-    if status in {ChatMemberStatus.LEFT, ChatMemberStatus.KICKED}:
-        await callback.message.answer(
-            "Для использования бота подпишитесь на канал",
-            reply_markup=build_subscription_keyboard(),
-        )
+    subscribed = await ensure_subscribed(bot, callback.from_user.id, callback)
+    if not subscribed:
         return
-
-    user = get_user_record(callback.from_user.id)
-    free_granted = user.get("free_granted", False)
-
-    if not free_granted:
-        user["diamonds"] = user.get("diamonds", 0) + SUBSCRIPTION_DIAMOND_REWARD
-        user["free_granted"] = True
-        save_user_record(callback.from_user.id, user)
 
     await callback.message.answer(
         "Привет, меня зовут Таро Жабка 🐸\n"
@@ -602,6 +696,7 @@ async def handle_check_subscription(callback: CallbackQuery, bot: Bot) -> None:
     )
 
 
+@subscription_required
 @router.message(F.text.in_({"Меню", "⬅️ В меню", "⬅️Назад"}))
 async def handle_menu(message: Message, state: FSMContext) -> None:
     await state.clear()
@@ -615,6 +710,7 @@ async def handle_menu(message: Message, state: FSMContext) -> None:
     )
 
 
+@subscription_required
 @router.message(F.text.in_({"Профиль", "⚙️ Профиль"}))
 async def handle_profile(message: Message, state: FSMContext) -> None:
     await state.clear()
@@ -626,6 +722,7 @@ async def handle_profile(message: Message, state: FSMContext) -> None:
     )
 
 
+@subscription_required
 @router.callback_query(F.data == "start_journey")
 async def handle_start_journey(callback: CallbackQuery) -> None:
     await callback.answer()
@@ -635,6 +732,7 @@ async def handle_start_journey(callback: CallbackQuery) -> None:
     )
 
 
+@subscription_required
 @router.callback_query(F.data == "spread_menu")
 async def handle_spread_menu_callback(callback: CallbackQuery) -> None:
     await callback.answer()
@@ -644,6 +742,7 @@ async def handle_spread_menu_callback(callback: CallbackQuery) -> None:
     )
 
 
+@subscription_required
 @router.message(F.text.in_({"Получить расклад", "🔮 Получить расклад"}))
 async def handle_get_spread(message: Message, state: FSMContext) -> None:
     await state.clear()
@@ -653,12 +752,14 @@ async def handle_get_spread(message: Message, state: FSMContext) -> None:
     )
 
 
+@subscription_required
 @router.callback_query(F.data == "spread_daily")
 async def handle_spread_daily_inline(callback: CallbackQuery) -> None:
     await callback.answer()
     await trigger_daily_spread(callback.from_user.id, callback.message)
 
 
+@subscription_required
 @router.callback_query(F.data == "spread_advanced")
 async def handle_spread_advanced_inline(callback: CallbackQuery) -> None:
     await callback.answer()
@@ -668,6 +769,7 @@ async def handle_spread_advanced_inline(callback: CallbackQuery) -> None:
     )
 
 
+@subscription_required
 @router.callback_query(F.data == "spread_back")
 async def handle_spread_back(callback: CallbackQuery) -> None:
     await callback.answer()
@@ -677,6 +779,7 @@ async def handle_spread_back(callback: CallbackQuery) -> None:
     )
 
 
+@subscription_required
 @router.message(F.text == "Получить 💎")
 async def handle_get_diamonds(message: Message, state: FSMContext) -> None:
     await state.clear()
@@ -724,12 +827,14 @@ async def trigger_daily_spread(user_id: int, message: Message) -> None:
     await process_card_of_day(message, user, card_files, cost=DAILY_SPREAD_COST)
 
 
+@subscription_required
 @router.message(F.text.in_({"🃏 Расклад дня", "Карта дня"}))
 async def handle_daily_spread(message: Message, state: FSMContext) -> None:
     await state.clear()
     await trigger_daily_spread(message.from_user.id, message)
 
 
+@subscription_required
 @router.message(F.text == "🗝️ Продвинутые расклады")
 async def handle_advanced_entry(message: Message, state: FSMContext) -> None:
     await state.clear()
@@ -739,6 +844,7 @@ async def handle_advanced_entry(message: Message, state: FSMContext) -> None:
     )
 
 
+@subscription_required
 @router.message(F.text == "Расклад из 3 карт")
 async def handle_advanced_spread_choice(message: Message, state: FSMContext) -> None:
     await state.clear()
@@ -766,11 +872,13 @@ async def handle_advanced_spread_choice(message: Message, state: FSMContext) -> 
     )
 
 
+@subscription_required
 @router.message(F.text == "Premium")
 async def handle_premium(message: Message) -> None:
     await message.answer("Premium скоро будет доступен.", reply_markup=build_menu_keyboard())
 
 
+@subscription_required
 @router.message(F.text == "Купить💎")
 async def handle_buy_diamonds(message: Message, state: FSMContext) -> None:
     await state.clear()
@@ -780,6 +888,7 @@ async def handle_buy_diamonds(message: Message, state: FSMContext) -> None:
     )
 
 
+@subscription_required
 @router.message(F.text.in_({"Пригласить друга", "Пригласить друзей"}))
 async def handle_invite_friend(message: Message, bot: Bot) -> None:
     me = await bot.get_me()
@@ -795,6 +904,7 @@ async def handle_invite_friend(message: Message, bot: Bot) -> None:
     )
 
 
+@subscription_required
 @router.message(F.text.in_({"🎁 Подарок", "🎁Подарок"}))
 async def handle_daily_gift(message: Message, state: FSMContext) -> None:
     await state.clear()
@@ -818,6 +928,7 @@ async def handle_daily_gift(message: Message, state: FSMContext) -> None:
     )
 
 
+@subscription_required
 @router.callback_query(F.data == "roll_daily_gift")
 async def handle_roll_daily_gift(callback: CallbackQuery) -> None:
     await callback.answer()
@@ -844,6 +955,7 @@ async def handle_roll_daily_gift(callback: CallbackQuery) -> None:
     )
 
 
+@subscription_required
 @router.callback_query(F.data == "adv_relations")
 async def handle_adv_relations(callback: CallbackQuery) -> None:
     await callback.answer()
@@ -853,6 +965,7 @@ async def handle_adv_relations(callback: CallbackQuery) -> None:
     )
 
 
+@subscription_required
 @router.callback_query(F.data == "adv_finance")
 async def handle_adv_finance(callback: CallbackQuery) -> None:
     await callback.answer()
@@ -862,6 +975,7 @@ async def handle_adv_finance(callback: CallbackQuery) -> None:
     )
 
 
+@subscription_required
 @router.callback_query(F.data == "adv_self")
 async def handle_adv_self(callback: CallbackQuery) -> None:
     await callback.answer()
@@ -871,6 +985,7 @@ async def handle_adv_self(callback: CallbackQuery) -> None:
     )
 
 
+@subscription_required
 @router.callback_query(F.data.startswith("leaf:"))
 async def handle_leaf_selection(callback: CallbackQuery, state: FSMContext) -> None:
     await callback.answer()
@@ -881,6 +996,7 @@ async def handle_leaf_selection(callback: CallbackQuery, state: FSMContext) -> N
     await process_prompt_spread(callback.message, prompt_key, question="")
 
 
+@subscription_required
 @router.message(F.text == "Уточняющий вопрос 10💎")
 async def handle_clarify_request(message: Message, state: FSMContext) -> None:
     await state.clear()
@@ -905,18 +1021,21 @@ async def handle_clarify_request(message: Message, state: FSMContext) -> None:
     )
 
 
+@subscription_required
 @router.message(SpreadStates.waiting_for_question, F.text == "Отмена")
 async def handle_cancel_question(message: Message, state: FSMContext) -> None:
     await state.clear()
     await message.answer("Действие отменено.", reply_markup=build_menu_keyboard())
 
 
+@subscription_required
 @router.message(SpreadStates.waiting_for_clarify, F.text == "Отмена")
 async def handle_cancel_clarify(message: Message, state: FSMContext) -> None:
     await state.clear()
     await message.answer("Действие отменено.", reply_markup=build_menu_keyboard())
 
 
+@subscription_required
 @router.message(SpreadStates.waiting_for_question)
 async def handle_three_card_question(message: Message, state: FSMContext) -> None:
     data = await state.get_data()
@@ -926,6 +1045,7 @@ async def handle_three_card_question(message: Message, state: FSMContext) -> Non
     await state.clear()
 
 
+@subscription_required
 @router.message(SpreadStates.waiting_for_clarify)
 async def handle_clarify_question(message: Message, state: FSMContext) -> None:
     user = get_user_record(message.from_user.id)
@@ -965,6 +1085,11 @@ async def main() -> None:
     )
     bot = Bot(token=BOT_TOKEN, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
     dispatcher = Dispatcher(storage=MemoryStorage())
+    subscription_middleware = SubscriptionMiddleware(
+        exempt_handlers={"handle_start", "handle_check_subscription"}
+    )
+    dispatcher.message.middleware(subscription_middleware)
+    dispatcher.callback_query.middleware(subscription_middleware)
     dispatcher.include_router(router)
 
     await bot.delete_webhook(drop_pending_updates=True)
