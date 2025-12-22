@@ -189,10 +189,12 @@ def build_start_journey_keyboard() -> InlineKeyboardMarkup:
 
 def build_menu_keyboard() -> ReplyKeyboardMarkup:
     builder = ReplyKeyboardBuilder()
-    builder.button(text="🔮 Получить расклад")
-    builder.button(text="Получить 💎")
-    builder.button(text="Профиль")
-    builder.adjust(2)
+    builder.button(text="✨ Получить расклад")
+    builder.button(text="🚀 Премиум")
+    builder.button(text="👤 Профиль")
+    builder.button(text="🔥 Бесплатные расклады")
+    builder.button(text="🏛 Испытай судьбу")
+    builder.adjust(2, 2, 1)
     return builder.as_markup(resize_keyboard=True)
 
 
@@ -700,7 +702,7 @@ async def handle_menu(message: Message, state: FSMContext) -> None:
 
 
 @subscription_required
-@router.message(F.text.in_({"Профиль", "⚙️ Профиль"}))
+@router.message(F.text.in_({"Профиль", "⚙️ Профиль", "👤 Профиль"}))
 async def handle_profile(message: Message, state: FSMContext) -> None:
     await state.clear()
     user = get_user_record(message.from_user.id)
@@ -732,13 +734,19 @@ async def handle_spread_menu_callback(callback: CallbackQuery) -> None:
 
 
 @subscription_required
-@router.message(F.text.in_({"Получить расклад", "🔮 Получить расклад"}))
+@router.message(F.text.in_({"Получить расклад", "🔮 Получить расклад", "✨ Получить расклад"}))
 async def handle_get_spread(message: Message, state: FSMContext) -> None:
     await state.clear()
     await message.answer(
         f"Тут ты можешь получить расклад. Стоимость: карта дня — {DAILY_SPREAD_COST}💎, расклады из 3 карт — {THREE_CARD_SPREAD_COST}💎.",
         reply_markup=build_spread_inline_keyboard(),
     )
+
+
+@subscription_required
+@router.message(F.text == "🔥 Бесплатные расклады")
+async def handle_free_spreads(message: Message, state: FSMContext) -> None:
+    await handle_get_spread(message, state)
 
 
 @subscription_required
@@ -862,7 +870,7 @@ async def handle_advanced_spread_choice(message: Message, state: FSMContext) -> 
 
 
 @subscription_required
-@router.message(F.text == "Premium")
+@router.message(F.text.in_({"Premium", "🚀 Премиум"}))
 async def handle_premium(message: Message) -> None:
     await message.answer("Premium скоро будет доступен.", reply_markup=build_menu_keyboard())
 
@@ -894,7 +902,7 @@ async def handle_invite_friend(message: Message, bot: Bot) -> None:
 
 
 @subscription_required
-@router.message(F.text.in_({"🎁 Подарок", "🎁Подарок"}))
+@router.message(F.text.in_({"🎁 Подарок", "🎁Подарок", "🏛 Испытай судьбу"}))
 async def handle_daily_gift(message: Message, state: FSMContext) -> None:
     await state.clear()
     user = get_user_record(message.from_user.id)
