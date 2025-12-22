@@ -446,18 +446,17 @@ class SubscriptionMiddleware(BaseMiddleware):
         super().__init__()
 
     async def __call__(self, handler: Any, event: Any, data: Dict[str, Any]) -> Any:
+        clean_data = dict(data)
+        clean_data.pop("dispatcher", None)
         handler_name = getattr(handler, "__name__", "")
         is_protected = getattr(handler, SUBSCRIPTION_REQUIRED_FLAG, False)
         if handler_name in self.exempt_handlers or not is_protected:
-            return await handler(event, **data)
+            return await handler(event, **clean_data)
 
         user = getattr(event, "from_user", None)
-        bot = data.get("bot")
+        bot = clean_data.get("bot")
         if not bot or not user:
-            return await handler(event, **data)
-
-        clean_data = dict(data)
-        clean_data.pop("dispatcher", None)
+            return await handler(event, **clean_data)
 
         is_subscribed = await ensure_subscribed(bot, user.id, event)
         if not is_subscribed:
