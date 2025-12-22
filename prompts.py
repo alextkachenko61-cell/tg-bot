@@ -54,7 +54,7 @@ PROMPT_REGISTRY: Dict[str, PromptConfig] = {
         key="REL_HAS_OTHER",
         mode="THREE",
         user_template=(
-            "Тема: отношения. Вопрос: {question}\n"
+            "Тема: отношения. Контекст: выяснить, есть ли у партнёра другая.\n"
             "Карты: {cards}. Дай краткий разбор и общий вывод. "
             "Используй [B]...[/B] для ключевых тезисов. Не используй HTML."
         ),
@@ -63,7 +63,7 @@ PROMPT_REGISTRY: Dict[str, PromptConfig] = {
         key="REL_IS_CHEATING",
         mode="THREE",
         user_template=(
-            "Тема: отношения. Вопрос: {question}\n"
+            "Тема: отношения. Контекст: понять, изменял ли партнёр.\n"
             "Карты: {cards}. Ответь, изменял ли партнёр, выдели кратко выводы. "
             "Используй [B]...[/B], не используй HTML."
         ),
@@ -72,7 +72,7 @@ PROMPT_REGISTRY: Dict[str, PromptConfig] = {
         key="REL_TRUE_LOVE",
         mode="THREE",
         user_template=(
-            "Тема: отношения. Вопрос: {question}\n"
+            "Тема: отношения. Контекст: определить, любит ли он на самом деле.\n"
             "Карты: {cards}. Определи, любит ли он на самом деле, дай общий вывод. "
             "Используй [B]...[/B], не используй HTML."
         ),
@@ -81,7 +81,7 @@ PROMPT_REGISTRY: Dict[str, PromptConfig] = {
         key="REL_OWN_WOMAN",
         mode="THREE",
         user_template=(
-            "Тема: отношения. Вопрос: {question}\n"
+            "Тема: отношения. Контекст: считает ли он меня своей женщиной.\n"
             "Карты: {cards}. Ответь, считает ли он меня своей женщиной, дай общий вывод. "
             "Используй [B]...[/B], не используй HTML."
         ),
@@ -90,7 +90,7 @@ PROMPT_REGISTRY: Dict[str, PromptConfig] = {
         key="REL_LEAVE_ME",
         mode="THREE",
         user_template=(
-            "Тема: отношения. Вопрос: {question}\n"
+            "Тема: отношения. Контекст: уйдёт ли он от меня.\n"
             "Карты: {cards}. Ответь, уйдёт ли он от меня, выдели ключевые выводы. "
             "Используй [B]...[/B], не используй HTML."
         ),
@@ -99,7 +99,7 @@ PROMPT_REGISTRY: Dict[str, PromptConfig] = {
         key="FIN_SOON_MONEY",
         mode="THREE",
         user_template=(
-            "Тема: финансы. Вопрос: {question}\n"
+            "Тема: финансы. Контекст: будут ли деньги в ближайшее время.\n"
             "Карты: {cards}. Ответь, будут ли деньги в ближайшее время, дай общий вывод. "
             "Используй [B]...[/B], не используй HTML."
         ),
@@ -108,7 +108,7 @@ PROMPT_REGISTRY: Dict[str, PromptConfig] = {
         key="FIN_NO_STICK",
         mode="THREE",
         user_template=(
-            "Тема: финансы. Вопрос: {question}\n"
+            "Тема: финансы. Контекст: почему деньги не задерживаются.\n"
             "Карты: {cards}. Объясни, почему деньги не задерживаются, и дай рекомендации. "
             "Используй [B]...[/B], не используй HTML."
         ),
@@ -117,7 +117,7 @@ PROMPT_REGISTRY: Dict[str, PromptConfig] = {
         key="FIN_SPEND_OR_SAVE",
         mode="THREE",
         user_template=(
-            "Тема: финансы. Вопрос: {question}\n"
+            "Тема: финансы. Контекст: тратить или экономить.\n"
             "Карты: {cards}. Сравни тратить или экономить, дай общий вывод. "
             "Используй [B]...[/B], не используй HTML."
         ),
@@ -126,7 +126,7 @@ PROMPT_REGISTRY: Dict[str, PromptConfig] = {
         key="FIN_FIND_SPONSOR",
         mode="THREE",
         user_template=(
-            "Тема: финансы. Вопрос: {question}\n"
+            "Тема: финансы. Контекст: найду ли я того, кто меня обеспечит.\n"
             "Карты: {cards}. Ответь, найду ли я того, кто меня обеспечит, дай краткий итог. "
             "Используй [B]...[/B], не используй HTML."
         ),
@@ -135,7 +135,7 @@ PROMPT_REGISTRY: Dict[str, PromptConfig] = {
         key="SELF_LIE",
         mode="THREE",
         user_template=(
-            "Тема: про себя. Вопрос: {question}\n"
+            "Тема: про себя. Контекст: где я себе лгу.\n"
             "Карты: {cards}. Подскажи, где я себе лгу, выдели ключевые выводы. "
             "Используй [B]...[/B], не используй HTML."
         ),
@@ -144,7 +144,7 @@ PROMPT_REGISTRY: Dict[str, PromptConfig] = {
         key="SELF_BLOCKS",
         mode="THREE",
         user_template=(
-            "Тема: про себя. Вопрос: {question}\n"
+            "Тема: про себя. Контекст: что меня реально сдерживает.\n"
             "Карты: {cards}. Что реально меня сдерживает? Дай краткий итог. "
             "Используй [B]...[/B], не используй HTML."
         ),
@@ -153,7 +153,7 @@ PROMPT_REGISTRY: Dict[str, PromptConfig] = {
         key="SELF_WANT",
         mode="THREE",
         user_template=(
-            "Тема: про себя. Вопрос: {question}\n"
+            "Тема: про себя. Контекст: чего я на самом деле хочу.\n"
             "Карты: {cards}. Чего я на самом деле хочу? Выдели ключевые выводы. "
             "Используй [B]...[/B], не используй HTML."
         ),
@@ -162,7 +162,7 @@ PROMPT_REGISTRY: Dict[str, PromptConfig] = {
         key="SELF_CONFLICT",
         mode="THREE",
         user_template=(
-            "Тема: про себя. Вопрос: {question}\n"
+            "Тема: про себя. Контекст: в чём мой внутренний конфликт.\n"
             "Карты: {cards}. В чём мой внутренний конфликт? Дай общий вывод. "
             "Используй [B]...[/B], не используй HTML."
         ),
@@ -171,7 +171,7 @@ PROMPT_REGISTRY: Dict[str, PromptConfig] = {
         key="SELF_ROLE",
         mode="THREE",
         user_template=(
-            "Тема: про себя. Вопрос: {question}\n"
+            "Тема: про себя. Контекст: какую роль я сейчас играю.\n"
             "Карты: {cards}. Какую роль я сейчас играю? Подчеркни ключевые выводы. "
             "Используй [B]...[/B], не используй HTML."
         ),
@@ -221,6 +221,7 @@ def build_prompt_messages(
 
     system_prompt = resolve_system_prompt(config.mode, base_prompt, day_prompt, three_prompt)
     override = load_prompt_override(prompt_key)
+    kwargs.setdefault("question", "")
     user_text = override or config.user_template.format(**kwargs)
 
     return [
