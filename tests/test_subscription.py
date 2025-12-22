@@ -102,6 +102,25 @@ def test_middleware_blocks_protected_handler_for_unsubscribed_text():
     assert "подпишитесь на канал" in message.answers[0]["text"].lower()
 
 
+def test_middleware_blocks_undeclared_handlers_by_default():
+    bot = DummyBot(ChatMemberStatus.LEFT)
+    middleware = main.SubscriptionMiddleware()
+    called = []
+
+    class PlainHandler:
+        async def __call__(self, event, data):
+            called.append(True)
+            return "ok"
+
+    message = DummyMessage(user_id=9)
+    result = asyncio.run(middleware(PlainHandler(), message, {"bot": bot}))
+
+    assert result is None
+    assert not called
+    assert message.answers
+    assert "подпишитесь" in message.answers[0]["text"].lower()
+
+
 def test_subscription_required_marks_wrapper_and_callback():
     class DummyCallable:
         def __init__(self):

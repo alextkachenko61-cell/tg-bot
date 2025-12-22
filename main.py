@@ -455,7 +455,7 @@ class SubscriptionMiddleware(BaseMiddleware):
         clean_data.pop("bots", None)
         target = getattr(handler, "callback", handler)
         handler_name = getattr(target, "__name__", "")
-        is_protected = getattr(target, SUBSCRIPTION_REQUIRED_FLAG, False)
+        is_protected = getattr(target, SUBSCRIPTION_REQUIRED_FLAG, True)
         if handler_name in self.exempt_handlers or not is_protected:
             return await handler(event, clean_data)
 
