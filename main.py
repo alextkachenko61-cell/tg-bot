@@ -371,9 +371,10 @@ def format_remaining(seconds: int) -> str:
 
 
 def evaluate_slot_reward(value: int) -> tuple[int, str]:
-    if value >= 64:
+    triple_values = {1, 22, 43, 64}
+    if value == 64:
         return 30, "💎 Джекпот — Жабка даёт 30 кристалликов"
-    if value >= 50:
+    if value in triple_values:
         return 15, "🎰 Три одинаковых — Жабка даёт 15 кристалликов"
     return 5, "❌ Не совпало — Жабка даёт 5 кристалликов"
 
