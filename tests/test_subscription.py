@@ -81,9 +81,9 @@ def test_middleware_blocks_protected_handler_for_unsubscribed_text():
     called = []
 
     @main.subscription_required
-    async def protected_handler(event, **_):
+    async def protected_handler(event, data):
         called.append(True)
-        return "ok"
+        return data
 
     message = DummyMessage(user_id=5)
     result = asyncio.run(

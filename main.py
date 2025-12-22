@@ -446,42 +446,25 @@ class SubscriptionMiddleware(BaseMiddleware):
         self.exempt_handlers = exempt_handlers or set()
         super().__init__()
 
-    @staticmethod
-    def _filter_kwargs(handler: Any, data: Dict[str, Any]) -> Dict[str, Any]:
-        target = getattr(handler, "callback", handler)
-        signature = inspect.signature(target)
-        has_var_kwargs = any(param.kind == inspect.Parameter.VAR_KEYWORD for param in signature.parameters.values())
-        if has_var_kwargs:
-            return data
-
-        allowed_keys = {
-            name
-            for name, param in signature.parameters.items()
-            if param.kind in {inspect.Parameter.POSITIONAL_OR_KEYWORD, inspect.Parameter.KEYWORD_ONLY}
-        }
-        return {key: value for key, value in data.items() if key in allowed_keys}
-
     async def __call__(self, handler: Any, event: Any, data: Dict[str, Any]) -> Any:
         clean_data = dict(data)
         clean_data.pop("dispatcher", None)
         clean_data.pop("bots", None)
         handler_name = getattr(handler, "__name__", "")
         is_protected = getattr(handler, SUBSCRIPTION_REQUIRED_FLAG, False)
-        filtered_kwargs = self._filter_kwargs(handler, clean_data)
         if handler_name in self.exempt_handlers or not is_protected:
-            return await handler(event, **filtered_kwargs)
+            return await handler(event, clean_data)
 
         user = getattr(event, "from_user", None)
         bot = clean_data.get("bot")
         if not bot or not user:
-            return await handler(event, **filtered_kwargs)
+            return await handler(event, clean_data)
 
         is_subscribed = await ensure_subscribed(bot, user.id, event)
         if not is_subscribed:
             return None
 
-        filtered_kwargs = self._filter_kwargs(handler, clean_data)
-        return await handler(event, **filtered_kwargs)
+        return await handler(event, clean_data)
 
 
 def format_profile_text(user: Dict[str, Any]) -> str:
