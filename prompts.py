@@ -1,3 +1,4 @@
+import logging
 import os
 from dataclasses import dataclass
 from pathlib import Path
@@ -222,7 +223,17 @@ def build_prompt_messages(
     system_prompt = resolve_system_prompt(config.mode, base_prompt, day_prompt, three_prompt)
     override = load_prompt_override(prompt_key)
     kwargs.setdefault("question", "")
-    user_text = override or config.user_template.format(**kwargs)
+    kwargs.setdefault("cards", "")
+
+    template = override or config.user_template
+    if config.mode == "THREE" and "{cards}" not in template:
+        logging.warning(
+            "Template for prompt '%s' does not include {cards}. Falling back to default template.",
+            prompt_key,
+        )
+        template = config.user_template
+
+    user_text = template.format(**kwargs)
 
     return [
         {"role": "system", "content": system_prompt},
