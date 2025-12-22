@@ -457,24 +457,10 @@ async def generate_card_day_interpretation(card_name: str) -> str:
     return text or fallback
 
 
-async def generate_three_cards_interpretation(question: str, card_names: List[str]) -> str:
+async def generate_prompt_interpretation(prompt_key: str, question: str = "", card_names: List[str] | None = None) -> str:
+    card_names = card_names or []
     joined_cards = ", ".join(card_names)
-    messages = build_prompt_messages(
-        "three_cards",
-        base_prompt=LLM_SYSTEM_PROMPT,
-        day_prompt=LLM_SYSTEM_PROMPT_DAY,
-        three_prompt=LLM_SYSTEM_PROMPT_3,
-        question=question,
-        cards=joined_cards,
-    )
-
-    fallback = "[B]Интерпретация недоступна.[/B] Позже добавим подробности по раскладу."
-    text = await call_llm(messages=messages, max_tokens=LLM_MAX_TOKENS_3, mode="THREE")
-    return text or fallback
-
-
-async def generate_prompt_interpretation(prompt_key: str, question: str, card_names: List[str]) -> str:
-    joined_cards = ", ".join(card_names)
+    safe_question = question or ""
     config = PROMPT_REGISTRY.get(prompt_key)
     mode = config.mode if config else "THREE"
     messages = build_prompt_messages(
@@ -482,7 +468,7 @@ async def generate_prompt_interpretation(prompt_key: str, question: str, card_na
         base_prompt=LLM_SYSTEM_PROMPT,
         day_prompt=LLM_SYSTEM_PROMPT_DAY,
         three_prompt=LLM_SYSTEM_PROMPT_3,
-        question=question,
+        question=safe_question,
         cards=joined_cards,
     )
     fallback = "[B]Интерпретация недоступна.[/B] Позже добавим подробности по раскладу."
@@ -503,6 +489,37 @@ async def generate_clarify_interpretation(card_name: str, question: str) -> str:
     fallback = "[B]Уточнение временно недоступно.[/B] Попробуйте позже."
     text = await call_llm(messages=messages, max_tokens=LLM_MAX_TOKENS_DAY, mode="DAY")
     return text or fallback
+
+
+async def process_prompt_spread(message: Message, prompt_key: str, question: str = "") -> bool:
+    user = get_user_record(message.from_user.id)
+    spreads_left = user.get("spreads_left", 0)
+    if spreads_left <= 0:
+        await message.answer(
+            "К сожалению, у вас закончились расклады. Вы можете приобрести premium либо получить бесплатный расклад за каждого приглашенного друга.",
+            reply_markup=build_premium_keyboard(),
+        )
+        return False
+
+    card_files = load_card_files()
+    if len(card_files) < 3:
+        await message.answer(
+            "Недостаточно карт в базе, добавьте не менее 3 изображений в assets/cards.",
+            reply_markup=build_menu_keyboard(),
+        )
+        return False
+
+    selected_cards = random.sample(card_files, 3)
+    collage_file = create_three_card_collage(selected_cards)
+    await message.answer_photo(collage_file)
+
+    card_names = [card.stem for card in selected_cards]
+    interpretation = await generate_prompt_interpretation(prompt_key, question=question, card_names=card_names)
+    await send_rendered_message(message, interpretation, reply_markup=build_menu_keyboard())
+
+    user["spreads_left"] = max(spreads_left - 1, 0)
+    save_user_record(message.from_user.id, user)
+    return True
 
 
 @router.message(CommandStart())
@@ -814,7 +831,7 @@ async def handle_adv_finance(callback: CallbackQuery) -> None:
 async def handle_adv_self(callback: CallbackQuery) -> None:
     await callback.answer()
     await callback.message.answer(
-        "Расклады на день",
+        "Расклады про себя",
         reply_markup=build_leaf_keyboard(SELF_OPTIONS),
     )
 
@@ -823,29 +840,10 @@ async def handle_adv_self(callback: CallbackQuery) -> None:
 async def handle_leaf_selection(callback: CallbackQuery, state: FSMContext) -> None:
     await callback.answer()
     prompt_key = callback.data.split(":", 1)[1]
-    user = get_user_record(callback.from_user.id)
-    spreads_left = user.get("spreads_left", 0)
-    if spreads_left <= 0:
-        await callback.message.answer(
-            "К сожалению, у вас закончились расклады. Вы можете приобрести premium либо получить бесплатный расклад за каждого приглашенного друга.",
-            reply_markup=build_premium_keyboard(),
-        )
+    await state.clear()
+    if not callback.message:
         return
-
-    card_files = load_card_files()
-    if len(card_files) < 3:
-        await callback.message.answer(
-            "Недостаточно карт в базе, добавьте не менее 3 изображений в assets/cards.",
-            reply_markup=build_menu_keyboard(),
-        )
-        return
-
-    await state.set_state(SpreadStates.waiting_for_question)
-    await state.update_data(prompt_key=prompt_key)
-    await callback.message.answer(
-        "Напишите ваш вопрос одним сообщением.",
-        reply_markup=build_cancel_keyboard(),
-    )
+    await process_prompt_spread(callback.message, prompt_key, question="")
 
 
 @router.message(F.text == "Уточняющий вопрос 10💎")
@@ -886,37 +884,10 @@ async def handle_cancel_clarify(message: Message, state: FSMContext) -> None:
 
 @router.message(SpreadStates.waiting_for_question)
 async def handle_three_card_question(message: Message, state: FSMContext) -> None:
-    user = get_user_record(message.from_user.id)
-    spreads_left = user.get("spreads_left", 0)
-
-    if spreads_left <= 0:
-        await state.clear()
-        await message.answer(
-            "К сожалению, у вас закончились расклады. Вы можете приобрести premium либо получить бесплатный расклад за каждого пригласившего друга.",
-            reply_markup=build_premium_keyboard(),
-        )
-        return
-
-    card_files = load_card_files()
-    if len(card_files) < 3:
-        await state.clear()
-        await message.answer(
-            "Недостаточно карт в базе, добавьте не менее 3 изображений в assets/cards.",
-            reply_markup=build_menu_keyboard(),
-        )
-        return
-
-    selected_cards = random.sample(card_files, 3)
-    collage_file = create_three_card_collage(selected_cards)
-    await message.answer_photo(collage_file)
-
-    card_names = [card.stem for card in selected_cards]
+    data = await state.get_data()
+    prompt_key = data.get("prompt_key", "three_cards")
     question_text = message.text or ""
-    interpretation = await generate_three_cards_interpretation(question_text, card_names)
-    await send_rendered_message(message, interpretation, reply_markup=build_menu_keyboard())
-
-    user["spreads_left"] = max(spreads_left - 1, 0)
-    save_user_record(message.from_user.id, user)
+    await process_prompt_spread(message, prompt_key, question=question_text)
     await state.clear()
 
 
