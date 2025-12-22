@@ -514,6 +514,8 @@ async def process_prompt_spread(message: Message, prompt_key: str, question: str
     await message.answer_photo(collage_file)
 
     card_names = [card.stem for card in selected_cards]
+    card_names_text = "Выпали карты: " + ", ".join(card_names)
+    await message.answer(card_names_text)
     interpretation = await generate_prompt_interpretation(prompt_key, question=question, card_names=card_names)
     await send_rendered_message(message, interpretation, reply_markup=build_menu_keyboard())
 
