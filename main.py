@@ -463,6 +463,7 @@ class SubscriptionMiddleware(BaseMiddleware):
     async def __call__(self, handler: Any, event: Any, data: Dict[str, Any]) -> Any:
         clean_data = dict(data)
         clean_data.pop("dispatcher", None)
+        clean_data.pop("bots", None)
         handler_name = getattr(handler, "__name__", "")
         is_protected = getattr(handler, SUBSCRIPTION_REQUIRED_FLAG, False)
         filtered_kwargs = self._filter_kwargs(handler, clean_data)
