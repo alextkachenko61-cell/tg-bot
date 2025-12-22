@@ -7,6 +7,7 @@ from datetime import datetime, timedelta, timezone
 from io import BytesIO
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
+import inspect
 
 from aiogram import BaseMiddleware, Bot, Dispatcher, Router, F
 from aiogram.client.default import DefaultBotProperties
