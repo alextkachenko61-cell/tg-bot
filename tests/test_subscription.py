@@ -102,6 +102,24 @@ def test_middleware_blocks_protected_handler_for_unsubscribed_text():
     assert "подпишитесь на канал" in message.answers[0]["text"].lower()
 
 
+def test_subscription_required_marks_wrapper_and_callback():
+    class DummyCallable:
+        def __init__(self):
+            async def cb(event, data):
+                return "ok"
+
+            self.callback = cb
+
+        async def __call__(self, event, data):
+            return await self.callback(event, data)
+
+    wrapped = DummyCallable()
+    decorated = main.subscription_required(wrapped)
+
+    assert getattr(decorated, main.SUBSCRIPTION_REQUIRED_FLAG, False) is True
+    assert getattr(decorated.callback, main.SUBSCRIPTION_REQUIRED_FLAG, False) is True
+
+
 def test_ensure_subscribed_answers_callback_on_refusal():
     bot = DummyBot(ChatMemberStatus.KICKED)
     callback = DummyCallback(user_id=7)

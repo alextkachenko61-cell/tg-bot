@@ -159,6 +159,9 @@ def ensure_user_defaults(user: Dict[str, Any]) -> Dict[str, Any]:
 
 def subscription_required(handler: Any) -> Any:
     setattr(handler, SUBSCRIPTION_REQUIRED_FLAG, True)
+    callback = getattr(handler, "callback", None)
+    if callback:
+        setattr(callback, SUBSCRIPTION_REQUIRED_FLAG, True)
     return handler
 
 
