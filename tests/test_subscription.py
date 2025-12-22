@@ -86,7 +86,7 @@ def test_middleware_blocks_protected_handler_for_unsubscribed_text():
         return "ok"
 
     message = DummyMessage(user_id=5)
-    result = asyncio.run(middleware(protected_handler, message, {"bot": bot}))
+    result = asyncio.run(middleware(protected_handler, message, {"bot": bot, "dispatcher": object()}))
 
     assert result is None
     assert not called

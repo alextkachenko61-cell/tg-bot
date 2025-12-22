@@ -456,11 +456,14 @@ class SubscriptionMiddleware(BaseMiddleware):
         if not bot or not user:
             return await handler(event, **data)
 
+        clean_data = dict(data)
+        clean_data.pop("dispatcher", None)
+
         is_subscribed = await ensure_subscribed(bot, user.id, event)
         if not is_subscribed:
             return None
 
-        return await handler(event, **data)
+        return await handler(event, **clean_data)
 
 
 def format_profile_text(user: Dict[str, Any]) -> str:
