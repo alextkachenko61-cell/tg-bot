@@ -231,7 +231,6 @@ def build_spread_inline_keyboard() -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
     builder.button(text="🃏 Расклад дня", callback_data="spread_daily")
     builder.button(text="🗝️ Продвинутые расклады", callback_data="spread_advanced")
-    builder.button(text="⬅️ Назад", callback_data="spread_back")
     builder.adjust(1)
     return builder.as_markup()
 
@@ -244,6 +243,16 @@ def build_advanced_categories_keyboard() -> InlineKeyboardMarkup:
     builder.button(text="⬅️ Назад", callback_data="spread_menu")
     builder.adjust(1)
     return builder.as_markup()
+
+
+def build_diamonds_keyboard() -> ReplyKeyboardMarkup:
+    builder = ReplyKeyboardBuilder()
+    builder.button(text="🎁Подарок")
+    builder.button(text="Пригласить друзей")
+    builder.button(text="Купить💎")
+    builder.button(text="⬅️Назад")
+    builder.adjust(2, 2)
+    return builder.as_markup(resize_keyboard=True)
 
 
 def build_leaf_keyboard(options: List[Tuple[str, str]]) -> InlineKeyboardMarkup:
@@ -514,6 +523,8 @@ async def process_prompt_spread(message: Message, prompt_key: str, question: str
     await message.answer_photo(collage_file)
 
     card_names = [card.stem for card in selected_cards]
+    card_names_text = "Выпали карты: " + ", ".join(card_names)
+    await message.answer(card_names_text)
     interpretation = await generate_prompt_interpretation(prompt_key, question=question, card_names=card_names)
     await send_rendered_message(message, interpretation, reply_markup=build_menu_keyboard())
 
@@ -594,7 +605,7 @@ async def handle_check_subscription(callback: CallbackQuery, bot: Bot) -> None:
     )
 
 
-@router.message(F.text.in_({"Меню", "⬅️ В меню"}))
+@router.message(F.text.in_({"Меню", "⬅️ В меню", "⬅️Назад"}))
 async def handle_menu(message: Message, state: FSMContext) -> None:
     await state.clear()
     user = get_user_record(message.from_user.id)
@@ -665,6 +676,18 @@ async def handle_spread_back(callback: CallbackQuery) -> None:
     await callback.message.answer(
         "Возвращаю в меню.",
         reply_markup=build_menu_keyboard(),
+    )
+
+
+@router.message(F.text == "Получить 💎")
+async def handle_get_diamonds(message: Message, state: FSMContext) -> None:
+    await state.clear()
+    await message.answer(
+        "У нас много способов для получения кристаликов:\n"
+        "Приглашай друзей и получай по 10 за каждого\n"
+        "Каждый день тебе доступен бесплатный подарок от Жабки\n"
+        "А так же можешь купить недостающие алмазики.",
+        reply_markup=build_diamonds_keyboard(),
     )
 
 
@@ -745,7 +768,16 @@ async def handle_premium(message: Message) -> None:
     await message.answer("Premium скоро будет доступен.", reply_markup=build_menu_keyboard())
 
 
-@router.message(F.text == "Пригласить друга")
+@router.message(F.text == "Купить💎")
+async def handle_buy_diamonds(message: Message, state: FSMContext) -> None:
+    await state.clear()
+    await message.answer(
+        "Скоро добавим покупку алмазиков. Пока доступны приглашения друзей и ежедневный подарок.",
+        reply_markup=build_diamonds_keyboard(),
+    )
+
+
+@router.message(F.text.in_({"Пригласить друга", "Пригласить друзей"}))
 async def handle_invite_friend(message: Message, bot: Bot) -> None:
     me = await bot.get_me()
     bot_username = me.username
@@ -756,11 +788,11 @@ async def handle_invite_friend(message: Message, bot: Bot) -> None:
     referral_link = f"https://t.me/{bot_username}?start={message.from_user.id}"
     await message.answer(
         "Поделитесь ссылкой с другом, чтобы получить дополнительный расклад:\n" f"{referral_link}",
-        reply_markup=build_menu_keyboard(),
+        reply_markup=build_diamonds_keyboard(),
     )
 
 
-@router.message(F.text.in_({"🎁 Подарок", "Получить 💎"}))
+@router.message(F.text.in_({"🎁 Подарок", "🎁Подарок"}))
 async def handle_daily_gift(message: Message, state: FSMContext) -> None:
     await state.clear()
     user = get_user_record(message.from_user.id)
@@ -768,7 +800,7 @@ async def handle_daily_gift(message: Message, state: FSMContext) -> None:
     if on_cooldown:
         await message.answer(
             f"Подарок будет доступен через {format_remaining(remaining)}.",
-            reply_markup=build_menu_keyboard(),
+            reply_markup=build_diamonds_keyboard(),
         )
         return
 
