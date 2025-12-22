@@ -190,15 +190,12 @@ def build_start_journey_keyboard() -> InlineKeyboardMarkup:
 
 def build_menu_keyboard() -> ReplyKeyboardMarkup:
     builder = ReplyKeyboardBuilder()
-    builder.row(
-        KeyboardButton(text="✨ Получить расклад"),
-        KeyboardButton(text="🚀 Премиум"),
-    )
-    builder.row(
-        KeyboardButton(text="👤 Профиль"),
-        KeyboardButton(text="🔥 Бесплатные расклады"),
-    )
-    builder.row(KeyboardButton(text="🏛 Испытай судьбу"))
+    builder.button(text="✨ Получить расклад")
+    builder.button(text="🚀 Премиум")
+    builder.button(text="👤 Профиль")
+    builder.button(text="🔥 Бесплатные расклады")
+    builder.button(text="🏛 Испытай судьбу")
+    builder.adjust(2, 2, 1)
     return builder.as_markup(resize_keyboard=True)
 
 
