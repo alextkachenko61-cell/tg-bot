@@ -7,6 +7,7 @@ from datetime import datetime, timedelta, timezone
 from io import BytesIO
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
+import inspect
 
 from aiogram import BaseMiddleware, Bot, Dispatcher, Router, F
 from aiogram.client.default import DefaultBotProperties
@@ -445,24 +446,40 @@ class SubscriptionMiddleware(BaseMiddleware):
         self.exempt_handlers = exempt_handlers or set()
         super().__init__()
 
+    @staticmethod
+    def _filter_kwargs(handler: Any, data: Dict[str, Any]) -> Dict[str, Any]:
+        signature = inspect.signature(handler)
+        has_var_kwargs = any(param.kind == inspect.Parameter.VAR_KEYWORD for param in signature.parameters.values())
+        if has_var_kwargs:
+            return data
+
+        allowed_keys = {
+            name
+            for name, param in signature.parameters.items()
+            if param.kind in {inspect.Parameter.POSITIONAL_OR_KEYWORD, inspect.Parameter.KEYWORD_ONLY}
+        }
+        return {key: value for key, value in data.items() if key in allowed_keys}
+
     async def __call__(self, handler: Any, event: Any, data: Dict[str, Any]) -> Any:
         clean_data = dict(data)
         clean_data.pop("dispatcher", None)
         handler_name = getattr(handler, "__name__", "")
         is_protected = getattr(handler, SUBSCRIPTION_REQUIRED_FLAG, False)
+        filtered_kwargs = self._filter_kwargs(handler, clean_data)
         if handler_name in self.exempt_handlers or not is_protected:
-            return await handler(event, **clean_data)
+            return await handler(event, **filtered_kwargs)
 
         user = getattr(event, "from_user", None)
         bot = clean_data.get("bot")
         if not bot or not user:
-            return await handler(event, **clean_data)
+            return await handler(event, **filtered_kwargs)
 
         is_subscribed = await ensure_subscribed(bot, user.id, event)
         if not is_subscribed:
             return None
 
-        return await handler(event, **clean_data)
+        filtered_kwargs = self._filter_kwargs(handler, clean_data)
+        return await handler(event, **filtered_kwargs)
 
 
 def format_profile_text(user: Dict[str, Any]) -> str:
